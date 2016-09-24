@@ -2,7 +2,7 @@ package mapreduce
 
 import "container/list"
 import "fmt"
-import "time"
+//import "time"
 
 type WorkerInfo struct {
 	address string
@@ -36,7 +36,7 @@ func (mr * MapReduce) updateRegChannel(){
 			case address := <- mr.idleChannel:
 				mr.Workers[address] = &WorkerInfo{address}	
 			default:
-				time.Sleep(50 * time.Millisecond)
+				//time.Sleep(50 * time.Millisecond)
 		}
 		
 	}
