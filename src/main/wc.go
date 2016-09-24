@@ -8,20 +8,32 @@ import "strings"
 import "container/list"
 import "strconv"
 
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		n, err = fmt.Printf(format, a...)
+	}
+	return
+}
+
 // our simplified version of MapReduce does not supply a
 // key to the Map function, as in the paper; only a value,
 // which is a part of the input file content. the return
 // value should be a list of key/value pairs, each represented
 // by a mapreduce.KeyValue.
 func Map(value string) *list.List {
+	//DPrintf("Map %v\n", value)
 	mapList := list.New()
 	f := func(c rune) bool {
 		return !unicode.IsLetter(c) && !unicode.IsNumber(c)
 	}
 	mapWords := strings.FieldsFunc(value, f)
 	//mapWords = strings.Fields(value)
-	for _,w := range mapWords{
+	for _, w := range mapWords{
+		//DPrintf("Map %v\n", w)
 		kv := mapreduce.KeyValue{w, "1"}
+		DPrintf("test %s %s\n", kv.Key, kv.Value)
 		mapList.PushBack(kv)
 	}
 	return mapList
@@ -31,14 +43,16 @@ func Map(value string) *list.List {
 // of that key's string value. should return a single
 // output value for that key.
 func Reduce(key string, values *list.List) string {
-	count := 0
-	for w := values.Front(); w != nil; w = w.Next() {
-		//DPrintf("Reduce %s %v\n", key, e.Value)
-		if key == w.Value {
-			count++
-		}
-	}
-	return strconv.Itoa(count)
+	//count := 0
+	//for w := values.Front(); w != nil; w = w.Next() {
+		//kv := w.Value//.(mapreduce.KeyValue)
+		//DPrintf("Reduce %s %s\n", key, kv)
+		//if key == w.Value {
+	//		count++
+		//}
+	//}
+	//return strconv.Itoa(count)
+	return strconv.Itoa(values.Len())
 }
 
 // Can be run in 3 ways:
