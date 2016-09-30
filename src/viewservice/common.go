@@ -2,6 +2,8 @@ package viewservice
 
 import "time"
 
+const DEBUG = false
+
 //
 // This is a non-replicated view service for a simple
 // primary/backup system.
