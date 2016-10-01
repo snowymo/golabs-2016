@@ -7,10 +7,14 @@ import "fmt"
 import "crypto/rand"
 import "math/big"
 
+import (
+	"strconv"
+)
 
 type Clerk struct {
 	vs *viewservice.Clerk
 	// Your declarations here
+	cachePrimary string
 }
 
 // this may come in handy.
@@ -25,10 +29,9 @@ func MakeClerk(vshost string, me string) *Clerk {
 	ck := new(Clerk)
 	ck.vs = viewservice.MakeClerk(me, vshost)
 	// Your ck.* initializations here
-
+	ck.cachePrimary = ""
 	return ck
 }
-
 
 //
 // call() sends an RPC to the rpcname handler on server srv
@@ -74,8 +77,25 @@ func call(srv string, rpcname string,
 func (ck *Clerk) Get(key string) string {
 
 	// Your code here.
+	if ck.cachePrimary == "" {
+		ck.cachePrimary = ck.vs.Primary()
+	}
 
-	return "???"
+	args := &GetArgs{}
+	args.Key = key
+	var reply GetReply
+	for {
+		ok := call(ck.cachePrimary, "PBServer.Get", args, &reply)
+		if ok {
+			if reply.Err != ErrWrongServer {
+				return reply.Value
+			}
+		} else {
+			ck.cachePrimary = ck.vs.Primary()
+		}
+
+	}
+
 }
 
 //
@@ -84,6 +104,35 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 	// Your code here.
+	if ck.cachePrimary == "" {
+		ck.cachePrimary = ck.vs.Primary()
+	}
+
+	args := &PutAppendArgs{}
+	args.Key = key
+	args.Value = value
+	args.Op = op
+	args.Update = false
+	args.Id = nrand()
+	var reply PutAppendReply
+	for {
+		if DEBUG {
+			fmt.Println("client put append " + ck.cachePrimary + " " + args.Key + " " + args.Value + " " + args.Op + " " + strconv.FormatInt(args.Id, 10))
+		}
+		ok := call(ck.cachePrimary, "PBServer.PutAppend", args, &reply)
+		if ok {
+			if reply.Err != ErrWrongServer {
+				return
+			}
+		} else {
+			ck.cachePrimary = ck.vs.Primary()
+		}
+	}
+
+	// if ok == false {
+	// 	return View{}, false
+	// }
+	// return reply, true
 }
 
 //

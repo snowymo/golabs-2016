@@ -1,5 +1,7 @@
 package pbservice
 
+const DEBUG = true
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -13,7 +15,9 @@ type PutAppendArgs struct {
 	Key   string
 	Value string
 	// You'll have to add definitions here.
-
+	Op     string
+	Update bool
+	Id     int64
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
@@ -31,6 +35,5 @@ type GetReply struct {
 	Err   Err
 	Value string
 }
-
 
 // Your RPC definitions here.

@@ -11,8 +11,9 @@ import "sync/atomic"
 import "os"
 import "syscall"
 import "math/rand"
-
-
+import (
+	"bytes"
+)
 
 type PBServer struct {
 	mu         sync.Mutex
@@ -22,25 +23,131 @@ type PBServer struct {
 	me         string
 	vs         *viewservice.Clerk
 	// Your declarations here.
+	curView  viewservice.View
+	kv       map[string]string
+	uid      map[int64]string
+	uidMutex sync.Mutex
 }
 
+func (pb *PBServer) print() {
+	if DEBUG {
+		fmt.Println("me:" + pb.me)
+		fmt.Printf("curView:%d\n", pb.curView.Viewnum)
+		fmt.Println("kv:")
+		for k, v := range pb.kv {
+			fmt.Printf("%s:%s\t", k, v)
+		}
+		fmt.Println("\n")
+	}
+
+}
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
+	if pb.isPrimary() {
+		key := args.Key
+		pb.mu.Lock()
+		v, ok := pb.kv[key]
+		pb.mu.Unlock()
+		if ok {
+			reply.Value = v
+			reply.Err = OK
+		} else {
+			reply.Value = ""
+			reply.Err = ErrNoKey
+		}
+	} else {
+		reply.Err = ErrWrongServer
+	}
 
 	return nil
 }
 
+func (pb *PBServer) isPrimary() bool {
+	if pb.curView.Primary == pb.me {
+		return true
+	} else {
+		return false
+	}
+}
 
 func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
+	if DEBUG {
+		fmt.Printf("RPC PutAppend before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
+	}
+	if pb.isPrimary() {
+		key, value := args.Key, args.Value
+		pb.mu.Lock()
+		if pb.uid[args.Id] == "" {
+			v, ok := pb.kv[key]
+			if ok {
+				var buffer bytes.Buffer
+				if args.Op == "Append" {
+					buffer.WriteString(v)
+				}
+				buffer.WriteString(value)
+				pb.kv[key] = buffer.String()
+				reply.Err = OK
+				pb.uid[args.Id] = "t"
+			} else {
+				pb.kv[key] = value
+				reply.Err = ErrNoKey
+			}
+			// send to backup
+			if pb.curView.Backup != "" {
+				if DEBUG {
+					fmt.Println("forward to backup:" + pb.curView.Backup)
+				}
+				call(pb.curView.Backup, "PBServer.Update", args, &reply)
+			}
+		} else {
+			reply.Err = OK
+		}
 
-
+		pb.mu.Unlock()
+	} else {
+		reply.Err = ErrWrongServer
+	}
+	pb.print()
 	return nil
 }
 
+func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
+
+	// Your code here.
+	if DEBUG {
+		fmt.Printf("RPC Update before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
+	}
+
+	if !pb.isPrimary() {
+		key, value := args.Key, args.Value
+		pb.mu.Lock()
+		v, ok := pb.kv[key]
+		if ok {
+			var buffer bytes.Buffer
+			if args.Op == "Append" {
+				buffer.WriteString(v)
+			}
+			buffer.WriteString(value)
+			pb.kv[key] = buffer.String()
+			reply.Err = OK
+		} else {
+			pb.kv[key] = value
+			reply.Err = ErrNoKey
+		}
+		pb.mu.Unlock()
+	} else {
+		reply.Err = ErrWrongServer
+	}
+	pb.print()
+	// if DEBUG {
+	// 	fmt.Printf("RPC Update after:%s dbsize:%d\n", pb.curView.Backup, len(pb.kv))
+	// }
+	return nil
+}
 
 //
 // ping the viewserver periodically.
@@ -51,6 +158,40 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 func (pb *PBServer) tick() {
 
 	// Your code here.
+	// args := &viewservice.PingArgs{}
+	// args.Me = pb.me
+	// args.Viewnum = pb.curView.Viewnum
+	// var reply viewservice.PingReply
+	v, _ := pb.vs.Ping(pb.curView.Viewnum)
+	if v.Viewnum != pb.curView.Viewnum {
+		// if view changed:
+		//   transition to new view.
+		//   manage transfer of state from primary to new backup.
+		pb.curView = v
+		//fmt.Println("change view in tick")
+		if pb.isPrimary() && pb.curView.Backup != "" {
+			//fmt.Printf("forward whole db to backup:%d\n", len(pb.kv))
+			pb.mu.Lock()
+			args := &PutAppendArgs{}
+			args.Op = "Put"
+			args.Update = false
+			var reply PutAppendReply
+			for k, v := range pb.kv {
+				args.Key = k
+				args.Value = v
+				//fmt.Printf("foward ing\t%s:%s\n", k, v)
+				call(pb.curView.Backup, "PBServer.Update", args, &reply)
+			}
+			pb.mu.Unlock()
+		}
+	}
+
+	//ok := call(pb.vs, "ViewServer.Ping", args, &reply)
+	// if ok == false {
+	// 	//pb.curView = View{}
+	// } else {
+	// 	pb.curView = v
+	// }
 }
 
 // tell the server to shut itself down.
@@ -78,12 +219,14 @@ func (pb *PBServer) isunreliable() bool {
 	return atomic.LoadInt32(&pb.unreliable) != 0
 }
 
-
 func StartServer(vshost string, me string) *PBServer {
 	pb := new(PBServer)
 	pb.me = me
 	pb.vs = viewservice.MakeClerk(me, vshost)
 	// Your pb.* initializations here.
+	pb.curView = viewservice.View{0, "", ""}
+	pb.kv = make(map[string]string)
+	pb.uid = make(map[int64]string)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)
