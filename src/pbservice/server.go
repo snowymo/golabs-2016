@@ -45,11 +45,13 @@ func (pb *PBServer) print() {
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if pb.isPrimary() {
 		key := args.Key
-		pb.mu.Lock()
+
 		v, ok := pb.kv[key]
-		pb.mu.Unlock()
+
 		if ok {
 			reply.Value = v
 			reply.Err = OK
@@ -78,9 +80,11 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 	if DEBUG {
 		fmt.Printf("RPC PutAppend before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
 	}
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if pb.isPrimary() {
 		key, value := args.Key, args.Value
-		pb.mu.Lock()
+
 		if pb.uid[args.Id] == "" {
 			v, ok := pb.kv[key]
 			if ok {
@@ -107,7 +111,6 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 			reply.Err = OK
 		}
 
-		pb.mu.Unlock()
 	} else {
 		reply.Err = ErrWrongServer
 	}
@@ -121,10 +124,11 @@ func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 	if DEBUG {
 		fmt.Printf("RPC Update before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
 	}
-
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if !pb.isPrimary() {
 		key, value := args.Key, args.Value
-		pb.mu.Lock()
+
 		v, ok := pb.kv[key]
 		if ok {
 			var buffer bytes.Buffer
@@ -133,12 +137,16 @@ func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 			}
 			buffer.WriteString(value)
 			pb.kv[key] = buffer.String()
+			// if args.Op != "Append" {
+			// 	v = ""
+			// }
+			// pb.kv[key] = v + value
 			reply.Err = OK
 		} else {
 			pb.kv[key] = value
 			reply.Err = ErrNoKey
 		}
-		pb.mu.Unlock()
+
 	} else {
 		reply.Err = ErrWrongServer
 	}
@@ -162,6 +170,8 @@ func (pb *PBServer) tick() {
 	// args.Me = pb.me
 	// args.Viewnum = pb.curView.Viewnum
 	// var reply viewservice.PingReply
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	v, _ := pb.vs.Ping(pb.curView.Viewnum)
 	if v.Viewnum != pb.curView.Viewnum {
 		// if view changed:
@@ -171,7 +181,7 @@ func (pb *PBServer) tick() {
 		//fmt.Println("change view in tick")
 		if pb.isPrimary() && pb.curView.Backup != "" {
 			//fmt.Printf("forward whole db to backup:%d\n", len(pb.kv))
-			pb.mu.Lock()
+
 			args := &PutAppendArgs{}
 			args.Op = "Put"
 			args.Update = false
@@ -182,7 +192,7 @@ func (pb *PBServer) tick() {
 				//fmt.Printf("foward ing\t%s:%s\n", k, v)
 				call(pb.curView.Backup, "PBServer.Update", args, &reply)
 			}
-			pb.mu.Unlock()
+
 		}
 	}
 

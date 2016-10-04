@@ -1,6 +1,6 @@
 package pbservice
 
-const DEBUG = true
+const DEBUG = false
 
 const (
 	OK             = "OK"
