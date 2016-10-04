@@ -77,11 +77,11 @@ func (pb *PBServer) isPrimary() bool {
 func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if DEBUG {
 		fmt.Printf("RPC PutAppend before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
 	}
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
 	if pb.isPrimary() {
 		key, value := args.Key, args.Value
 
@@ -121,11 +121,11 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if DEBUG {
 		fmt.Printf("RPC Update before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
 	}
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
 	if !pb.isPrimary() {
 		key, value := args.Key, args.Value
 
