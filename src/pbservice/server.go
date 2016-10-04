@@ -95,11 +95,11 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 				buffer.WriteString(value)
 				pb.kv[key] = buffer.String()
 				reply.Err = OK
-				pb.uid[args.Id] = "t"
 			} else {
 				pb.kv[key] = value
 				reply.Err = ErrNoKey
 			}
+			pb.uid[args.Id] = "t"
 			// send to backup
 			if pb.curView.Backup != "" {
 				if DEBUG {

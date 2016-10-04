@@ -7,6 +7,8 @@ import "fmt"
 import "crypto/rand"
 import "math/big"
 
+//import "time"
+
 import (
 	"strconv"
 )
@@ -90,9 +92,9 @@ func (ck *Clerk) Get(key string) string {
 			if reply.Err != ErrWrongServer {
 				return reply.Value
 			}
-		} else {
-			ck.cachePrimary = ck.vs.Primary()
 		}
+		//	time.Sleep(viewservice.PingInterval)
+		ck.cachePrimary = ck.vs.Primary()
 
 	}
 
@@ -124,9 +126,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			if reply.Err != ErrWrongServer {
 				return
 			}
-		} else {
-			ck.cachePrimary = ck.vs.Primary()
 		}
+		//time.Sleep(viewservice.PingInterval)
+		ck.cachePrimary = ck.vs.Primary()
 	}
 
 	// if ok == false {
