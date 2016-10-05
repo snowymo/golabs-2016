@@ -86,17 +86,15 @@ func (ck *Clerk) Get(key string) string {
 	args := &GetArgs{}
 	args.Key = key
 	var reply GetReply
-	for {
-		ok := call(ck.cachePrimary, "PBServer.Get", args, &reply)
-		if ok {
-			if reply.Err != ErrWrongServer {
-				return reply.Value
-			}
-		}
+	ok := false
+
+	for !ok || (reply.Err == ErrWrongServer) {
+		ok = call(ck.cachePrimary, "PBServer.Get", args, &reply)
 		//	time.Sleep(viewservice.PingInterval)
 		ck.cachePrimary = ck.vs.Primary()
 
 	}
+	return reply.Value
 
 }
 
@@ -117,18 +115,17 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Update = false
 	args.Id = nrand()
 	var reply PutAppendReply
-	for {
+	ok := false
+	for !ok || (reply.Err == ErrWrongServer) {
 		if DEBUG {
 			fmt.Println("client put append " + ck.cachePrimary + " " + args.Key + " " + args.Value + " " + args.Op + " " + strconv.FormatInt(args.Id, 10))
 		}
-		ok := call(ck.cachePrimary, "PBServer.PutAppend", args, &reply)
-		if ok {
-			if reply.Err != ErrWrongServer {
-				return
-			}
-		}
+		ok = call(ck.cachePrimary, "PBServer.PutAppend", args, &reply)
 		//time.Sleep(viewservice.PingInterval)
-		ck.cachePrimary = ck.vs.Primary()
+		if !ok || (reply.Err == ErrWrongServer) {
+			ck.cachePrimary = ck.vs.Primary()
+		}
+
 	}
 
 	// if ok == false {
