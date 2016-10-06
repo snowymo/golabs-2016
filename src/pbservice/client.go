@@ -91,7 +91,9 @@ func (ck *Clerk) Get(key string) string {
 	for !ok || (reply.Err == ErrWrongServer) {
 		ok = call(ck.cachePrimary, "PBServer.Get", args, &reply)
 		//	time.Sleep(viewservice.PingInterval)
-		ck.cachePrimary = ck.vs.Primary()
+		if !ok || (reply.Err == ErrWrongServer) {
+			ck.cachePrimary = ck.vs.Primary()
+		}
 
 	}
 	return reply.Value

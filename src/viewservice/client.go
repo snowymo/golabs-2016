@@ -53,6 +53,10 @@ func call(srv string, rpcname string,
 	return false
 }
 
+func (ck *Clerk) Getme() string {
+	return ck.me
+}
+
 func (ck *Clerk) Ping(viewnum uint) (View, error) {
 	// prepare the arguments.
 	args := &PingArgs{}

@@ -2,7 +2,7 @@ package viewservice
 
 import "time"
 
-const DEBUG = false
+const DEBUG = true
 
 //
 // This is a non-replicated view service for a simple
@@ -39,6 +39,7 @@ type View struct {
 	Viewnum uint
 	Primary string
 	Backup  string
+	//Acked   bool
 }
 
 // clients should send a Ping RPC this often,

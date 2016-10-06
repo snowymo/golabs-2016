@@ -33,7 +33,7 @@ type PBServer struct {
 func (pb *PBServer) print() {
 	if DEBUG {
 		fmt.Println("me:" + pb.me)
-		fmt.Printf("curView:%d\n", pb.curView.Viewnum)
+		fmt.Printf("curView:%d pri:\t%v\tback:\t%v\n", pb.curView.Viewnum, pb.curView.Primary, pb.curView.Backup)
 		fmt.Println("kv:")
 		for k, v := range pb.kv {
 			fmt.Printf("%s:%s\t", k, v)
@@ -63,7 +63,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	} else {
 		reply.Err = ErrWrongServer
 	}
-
+	pb.debugPrintf("GET isPri:%t\tkey:%v\tvalue:%v\n", pb.isPrimary(), args.Key, reply.Value)
 	return nil
 }
 
@@ -87,41 +87,67 @@ func (pb *PBServer) debugPrintf(format string, a ...interface{}) {
 	}
 }
 
+func (pb *PBServer) putAppendHelp(args *PutAppendArgs, reply *PutAppendReply) {
+	key, value := args.Key, args.Value
+	v, ok := pb.kv[key]
+	if ok {
+		var buffer bytes.Buffer
+		if args.Op == "Append" {
+			buffer.WriteString(v)
+		}
+		buffer.WriteString(value)
+		pb.kv[key] = buffer.String()
+		reply.Err = OK
+	} else {
+		pb.kv[key] = value
+		reply.Err = ErrNoKey
+	}
+	pb.uid[args.Id] = args.Key + args.Value
+	pb.print()
+}
+
 func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
 	pb.mu.Lock()
 
-	pb.debugPrintf("RPC PutAppend before dbsize:%d %t\n", len(pb.kv), pb.isPrimary())
+	pb.debugPrintf("RPC PutAppend before dbsize:%d\t%t\t%v:%v\n", len(pb.kv), pb.isPrimary(), args.Key, args.Value)
 
 	if pb.isPrimary() {
-		key, value := args.Key, args.Value
+		//key, value := args.Key, args.Value
 		if pb.uid[args.Id] == "" {
-			v, ok := pb.kv[key]
-			if ok {
-				var buffer bytes.Buffer
-				if args.Op == "Append" {
-					buffer.WriteString(v)
-				}
-				buffer.WriteString(value)
-				pb.kv[key] = buffer.String()
-				reply.Err = OK
-			} else {
-				pb.kv[key] = value
-				reply.Err = ErrNoKey
-			}
-			pb.uid[args.Id] = args.Key + args.Value
-			pb.print()
+			pb.putAppendHelp(args, reply)
 			// send to backup
+			// pb.mu.Unlock()
+			// pb.mu.Lock()
 			if pb.curView.Backup != "" {
 				okUpdate := false
+				//curBackup := pb.curView.Backup
+				//curPrimary := pb.curView.Primary
 				// args.Update = false
 				for !okUpdate && pb.curView.Backup != "" {
 					//pb.debugPrintln("test4")
-					pb.debugPrintln("forward to backup:" + pb.curView.Backup)
-					okUpdate = call(pb.curView.Backup, "PBServer.Update", args, &reply)
+					// if curPrimary != pb.curView.Primary {
+					// 	curPrimary = pb.curView.Primary
+					// 	// backup is changed outside, we need to forward the rpc to primary either
+					// 	if pb.isPrimary() {
+					// 		if pb.uid[args.Id] == "" {
+					// 			pb.debugPrintln("server reput append " + curPrimary + " " + args.Key + " " + args.Value + " " + strconv.FormatInt(args.Id, 10))
+					// 			pb.putAppendHelp(args, reply)
+					// 		} else {
+					// 			ok := false
+					// 			for !ok || (reply.Err == ErrWrongServer) {
+					// 				pb.debugPrintln("server resend put append " + curPrimary + " " + args.Key + " " + args.Value + " " + strconv.FormatInt(args.Id, 10))
+					// 				ok = call(curPrimary, "PBServer.PutAppend", args, &reply)
+					// 			}
+					// 		}
+					// 	}
+					// }
 					pb.mu.Unlock()
 					pb.mu.Lock()
+					pb.debugPrintln("forward to backup:" + pb.curView.Backup + "\t" + args.Key + ":" + args.Value)
+					okUpdate = call(pb.curView.Backup, "PBServer.Update", args, &reply)
+
 				}
 			}
 		} else {
@@ -142,7 +168,7 @@ func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 	if DEBUG {
-		fmt.Printf("RPC Update before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
+		fmt.Printf("RPC Update before:%s dbsize:%d %t\t%v:%v\n", pb.curView.Backup, len(pb.kv), pb.isPrimary(), args.Key, args.Value)
 	}
 	if !pb.isPrimary() {
 		key, value := args.Key, args.Value
@@ -182,7 +208,7 @@ func (pb *PBServer) Updateuid(args *PutAppendArgs, reply *PutAppendReply) error 
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
-	pb.debugPrintf("RPC Update before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
+	//pb.debugPrintf("RPC Update UID before:%s dbsize:%d %t\n", pb.curView.Backup, len(pb.kv), pb.isPrimary())
 
 	if !pb.isPrimary() {
 		//key, value := args.Key, args.Value
@@ -193,7 +219,7 @@ func (pb *PBServer) Updateuid(args *PutAppendArgs, reply *PutAppendReply) error 
 	} else {
 		reply.Err = ErrWrongServer
 	}
-	pb.print()
+	//pb.print()
 	// if DEBUG {
 	// 	fmt.Printf("RPC Update after:%s dbsize:%d\n", pb.curView.Backup, len(pb.kv))
 	// }
@@ -213,14 +239,30 @@ func (pb *PBServer) tick() {
 	// args.Me = pb.me
 	// args.Viewnum = pb.curView.Viewnum
 	// var reply viewservice.PingReply
-	v, _ := pb.vs.Ping(pb.curView.Viewnum)
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	ok := false
+	var v viewservice.View
+	for !ok {
+		v, ok = pb.vs.Get()
+	}
+
+	v, _ = pb.vs.Ping(v.Viewnum)
+	pb.debugPrintf("pb tick after ping:\t%v\tcurviewno:\t%d\trealviewno:%d\n", pb.vs.Getme(), pb.curView.Viewnum, v.Viewnum)
+	// if v.Viewnum != pb.curView.Viewnum {
+	// 	pb.debugPrintf("pb tick after ping again:\t%v\tcurviewno:\t%d\trealviewno:%d\n", pb.vs.Getme(), pb.curView.Viewnum, v.Viewnum)
+	// 	v, _ = pb.vs.Ping(v.Viewnum)
+	// }
+
 	if v.Viewnum != pb.curView.Viewnum {
 		// if view changed:
 		//   transition to new view.
 		//   manage transfer of state from primary to new backup.
+		//for v.Viewnum != pb.curView.Viewnum {
 		pb.curView = v
+		// 	v, _ = pb.vs.Ping(pb.curView.Viewnum)
+		// }
+
 		//fmt.Println("change view in tick")
 		if pb.isPrimary() && pb.curView.Backup != "" {
 			//fmt.Printf("forward whole db to backup:%d\n", len(pb.kv))
@@ -234,9 +276,12 @@ func (pb *PBServer) tick() {
 				args.Value = v
 				//fmt.Printf("foward ing\t%s:%s\n", k, v)
 				okUpdate := false
+				pb.print()
+				pb.debugPrintf("backup in tick:%v\n", pb.curView.Backup)
 				for !okUpdate && pb.curView.Backup != "" {
 					okUpdate = call(pb.curView.Backup, "PBServer.Update", args, &reply)
 				}
+
 			}
 			for k, v := range pb.uid {
 				args.Key = strconv.FormatInt(k, 10)
