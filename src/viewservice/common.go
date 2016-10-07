@@ -2,7 +2,7 @@ package viewservice
 
 import "time"
 
-const DEBUG = true
+const DEBUG = false
 
 //
 // This is a non-replicated view service for a simple
