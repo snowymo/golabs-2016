@@ -13,7 +13,7 @@ import "syscall"
 import "math/rand"
 import (
 	"bytes"
-	"strconv"
+	//"strconv"
 )
 
 type PBServer struct {
@@ -202,7 +202,7 @@ func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 	return nil
 }
 
-func (pb *PBServer) Updateuid(args *PutAppendArgs, reply *PutAppendReply) error {
+func (pb *PBServer) UpdateAll(args *UpdateAppendArgs, reply *UpdateAppendReply) error {
 
 	// Your code here.
 	pb.mu.Lock()
@@ -212,9 +212,20 @@ func (pb *PBServer) Updateuid(args *PutAppendArgs, reply *PutAppendReply) error 
 
 	if !pb.isPrimary() {
 		//key, value := args.Key, args.Value
-		ikey, _ := strconv.ParseInt(args.Key, 10, 64)
-		if args.Update || pb.uid[ikey] == "" {
-			pb.uid[ikey] = "t"
+		// ikey, _ := strconv.ParseInt(args.Key, 10, 64)
+		// if args.Update || pb.uid[ikey] == "" {
+		// 	pb.uid[ikey] = "t"
+		// }
+		for k, v := range args.Kv {
+			newv, _ := pb.kv[k]
+			if newv == "" {
+				pb.kv[k] = v
+			} else {
+				pb.debugPrintln("update all meet existing key")
+			}
+		}
+		for k, v := range args.Uid {
+			pb.uid[k] = v
 		}
 	} else {
 		reply.Err = ErrWrongServer
@@ -241,13 +252,13 @@ func (pb *PBServer) tick() {
 	// var reply viewservice.PingReply
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	ok := false
-	var v viewservice.View
-	for !ok {
-		v, ok = pb.vs.Get()
-	}
+	// ok := false
+	// var v viewservice.View
+	// for !ok {
+	// 	v, ok = pb.vs.Get()
+	// }
 
-	v, _ = pb.vs.Ping(v.Viewnum)
+	v, _ := pb.vs.Ping(pb.curView.Viewnum)
 	pb.debugPrintf("pb tick after ping:\t%v\tcurviewno:\t%d\trealviewno:%d\n", pb.vs.Getme(), pb.curView.Viewnum, v.Viewnum)
 	// if v.Viewnum != pb.curView.Viewnum {
 	// 	pb.debugPrintf("pb tick after ping again:\t%v\tcurviewno:\t%d\trealviewno:%d\n", pb.vs.Getme(), pb.curView.Viewnum, v.Viewnum)
@@ -267,31 +278,31 @@ func (pb *PBServer) tick() {
 		if pb.isPrimary() && pb.curView.Backup != "" {
 			//fmt.Printf("forward whole db to backup:%d\n", len(pb.kv))
 
-			args := &PutAppendArgs{}
-			args.Op = "Put"
-			args.Update = true
-			var reply PutAppendReply
-			for k, v := range pb.kv {
-				args.Key = k
-				args.Value = v
-				//fmt.Printf("foward ing\t%s:%s\n", k, v)
-				okUpdate := false
-				pb.print()
-				pb.debugPrintf("backup in tick:%v\n", pb.curView.Backup)
-				for !okUpdate && pb.curView.Backup != "" {
-					okUpdate = call(pb.curView.Backup, "PBServer.Update", args, &reply)
-				}
+			args := &UpdateAppendArgs{}
+			args.Kv = pb.kv
+			args.Uid = pb.uid
+			var reply UpdateAppendReply
+			// for k, v := range pb.kv {
+			// 	args.Key = k
+			// 	args.Value = v
+			//fmt.Printf("foward ing\t%s:%s\n", k, v)
+			okUpdate := false
+			pb.print()
+			pb.debugPrintf("backup in tick:%v\n", pb.curView.Backup)
+			for !okUpdate && pb.curView.Backup != "" {
+				okUpdate = call(pb.curView.Backup, "PBServer.UpdateAll", args, &reply)
+			}
 
-			}
-			for k, v := range pb.uid {
-				args.Key = strconv.FormatInt(k, 10)
-				args.Value = v
-				//fmt.Printf("foward ing\t%s:%s\n", k, v)
-				okUid := false
-				for !okUid && pb.curView.Backup != "" {
-					okUid = call(pb.curView.Backup, "PBServer.Updateuid", args, &reply)
-				}
-			}
+			//}
+			// for k, v := range pb.uid {
+			// 	args.Key = strconv.FormatInt(k, 10)
+			// 	args.Value = v
+			// 	//fmt.Printf("foward ing\t%s:%s\n", k, v)
+			// 	okUid := false
+			// 	for !okUid && pb.curView.Backup != "" {
+			// 		okUid = call(pb.curView.Backup, "PBServer.Updateuid", args, &reply)
+			// 	}
+			// }
 
 		}
 	}

@@ -36,4 +36,18 @@ type GetReply struct {
 	Value string
 }
 
+// Update
+type UpdateAppendArgs struct {
+	Kv  map[string]string
+	Uid map[int64]string
+	// You'll have to add definitions here.
+
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+}
+
+type UpdateAppendReply struct {
+	Err Err
+}
+
 // Your RPC definitions here.
