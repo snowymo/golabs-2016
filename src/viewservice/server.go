@@ -9,8 +9,8 @@ import "fmt"
 import "os"
 import "sync/atomic"
 import (
-	"container/list"
-	//"strconv"
+//"container/list"
+//"strconv"
 )
 
 type ViewServer struct {
@@ -25,9 +25,9 @@ type ViewServer struct {
 	bAcked       bool                 // primary server acked
 	mapPingTrack map[string]time.Time // time for recent ping from servers
 	curView      View                 // current view
-	idleServer   map[string]int       // server, neither primary nor back, pinged, might turn to array if we have more than two servers at all
+	//idleServer   map[string]int       // server, neither primary nor back, pinged, might turn to array if we have more than two servers at all
 	//	muIdle       sync.Mutex           // for idleserver map
-	muPing     sync.Mutex // for ping track map
+	//muPing     sync.Mutex // for ping track map
 	viewChange bool
 }
 
@@ -49,9 +49,9 @@ func (vs *ViewServer) print() {
 		fmt.Printf("current view:%d p:%s b:%s ack:%t\n", vs.curView.Viewnum, vs.curView.Primary, vs.curView.Backup, vs.bAcked)
 		// print idleservers
 		//fmt.Printf("idle servers %d\n", len(vs.idleServer))
-		for k, _ := range vs.idleServer {
-			fmt.Printf("idle server %s\n", k)
-		}
+		// for k, _ := range vs.idleServer {
+		// 	fmt.Printf("idle server %s\n", k)
+		// }
 		//print ping log
 		for k, v := range vs.mapPingTrack {
 			fmt.Printf("server %s:time %s\n", k, v.String())
@@ -60,38 +60,10 @@ func (vs *ViewServer) print() {
 
 }
 
-func (vs *ViewServer) addIdle(name string) {
-	//vs.muIdle.Lock()
-	_, ok := vs.idleServer[name]
-	if !ok {
-		// generate new index
-		vmax := 0
-		for _, v := range vs.idleServer {
-			if v > vmax {
-				vmax = v
-			}
-		}
-		vs.idleServer[name] = vmax + 1
-	}
-	//vs.muIdle.Unlock()
-	// if DEBUG {
-	// 	fmt.Printf("after add idle\n")
-	// }
-	if DEBUG {
-		fmt.Println("in addIdle")
-	}
-	vs.print()
-
-}
-
 //
 // server Ping RPC handler.
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
-	// if DEBUG {
-	// 	fmt.Printf("ping %s %d\n", args.Me, args.Viewnum)
-	// }
-
 	// Your code here.
 	ckname := args.Me
 	viewno := args.Viewnum
@@ -100,13 +72,10 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 	if DEBUG {
 		fmt.Printf("ping:\t%v\t%d\n", ckname, viewno)
 	}
-	if viewno > 0 {
-		vs.mapPingTrack[ckname] = time.Now()
-	}
-	vs.viewChange = false
-	// vs.mu.Unlock()
 
-	// vs.mu.Lock()
+	vs.mapPingTrack[ckname] = time.Now()
+	vs.viewChange = false
+
 	// check current view number
 	if vs.nView == 0 {
 		// does not have a view now
@@ -117,25 +86,26 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 		case vs.curView.Primary:
 			if viewno == 0 {
 				// todo:primary broke and restarted
-				vs.addIdle(ckname)
-
+				//vs.addIdle(ckname)
+				// destroy current primary
+				//vs.curView.Primary = ""
+				vs.promoteToPrimary()
 			} else {
 				// ack it
 				if vs.curView.Viewnum == viewno {
 					vs.bAcked = true
 				}
-
 			}
 		case vs.curView.Backup:
 			if viewno == 0 {
 				// todo:backup broke and restarted
-				vs.addIdle(ckname)
-			} else {
-
+				//vs.addIdle(ckname)
+				//vs.curView.Backup = ""
+				vs.promoteToBackup()
 			}
 		default:
 			// new server
-			vs.addIdle(ckname)
+			//vs.addIdle(ckname)
 		}
 	}
 	if vs.viewChange {
@@ -205,10 +175,8 @@ func (vs *ViewServer) promoteToPrimary() {
 			//if len(vs.idleServer) > 0 {
 			//	vs.curView = View{vs.nView, vs.curView.Backup, vs.getIdleServer()}
 			//} else {
-			vs.curView = View{vs.nView, vs.curView.Backup, ""}
+			vs.curView = View{vs.nView, vs.curView.Backup, vs.getIdleServer()}
 			//}
-		} else if len(vs.idleServer) > 0 {
-			vs.curView = View{vs.nView, vs.getIdleServer(), ""}
 		} else {
 			fmt.Println("FAIL should not happen")
 			vs.removePrimary()
@@ -219,14 +187,19 @@ func (vs *ViewServer) promoteToPrimary() {
 	//vs.mu.Unlock()
 }
 
-func (vs *ViewServer) promoteToBackup(name string) {
+func (vs *ViewServer) promoteToBackup() {
 	//vs.mu.Lock()
 	if vs.bAcked {
 		//vs.nView++
-		vs.viewChange = true
-		vs.curView = View{vs.nView, vs.curView.Primary, name}
-		vs.bAcked = false
-		vs.mapPingTrack[name] = time.Now()
+
+		newbackup := vs.getIdleServer()
+		if newbackup != "" {
+			vs.curView = View{vs.nView, vs.curView.Primary, newbackup}
+			vs.viewChange = true
+			vs.bAcked = false
+		} else {
+			// no idle for backup
+		}
 	}
 	//vs.mu.Unlock()
 }
@@ -234,27 +207,12 @@ func (vs *ViewServer) promoteToBackup(name string) {
 func (vs *ViewServer) getIdleServer() string {
 	// vs.muIdle.Lock()
 	// defer vs.muIdle.Unlock()
-	if len(vs.idleServer) > 0 {
-		vmin := int(vs.nView * 20)
-		kmin := ""
-		for kmin == "" {
-			vmin = vmin * 2
-			for k, v := range vs.idleServer {
-				if v < vmin {
-					vmin = v
-					kmin = k
-				}
-			}
+	for k, _ := range vs.mapPingTrack {
+		if k != vs.curView.Primary && k != vs.curView.Backup {
+			return k
 		}
-
-		delete(vs.idleServer, kmin)
-		//vs.muIdle.Unlock()
-		return kmin
-	} else {
-		//vs.muIdle.Unlock()
-		return ""
 	}
-
+	return ""
 }
 
 func (vs *ViewServer) removeBackup() {
@@ -280,19 +238,19 @@ func (vs *ViewServer) removePrimary() {
 	//vs.mu.Unlock()
 }
 
-func (vs *ViewServer) removeIdle() {
-	l := list.New()
-	for k, _ := range vs.idleServer {
-		t, ok := vs.mapPingTrack[k]
-		if ok && time.Now().Sub(t) > DeadPings*PingInterval {
-			l.PushBack(k)
-		}
-	}
-	for e := l.Front(); e != nil; e = e.Next() {
-		delete(vs.idleServer, e.Value.(string))
-	}
+// func (vs *ViewServer) removeIdle() {
+// 	l := list.New()
+// 	for k, _ := range vs.idleServer {
+// 		t, ok := vs.mapPingTrack[k]
+// 		if ok && time.Now().Sub(t) > DeadPings*PingInterval {
+// 			l.PushBack(k)
+// 		}
+// 	}
+// 	for e := l.Front(); e != nil; e = e.Next() {
+// 		delete(vs.idleServer, e.Value.(string))
+// 	}
 
-}
+// }
 
 //
 // tick() is called once per PingInterval; it should notice
@@ -300,90 +258,47 @@ func (vs *ViewServer) removeIdle() {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-	//vs.print()
-	// if DEBUG {
-	// 	fmt.Println("tick")
-	// }
-
 	// Your code here.
 	// no ping from both servers
 	vs.mu.Lock()
-	// if !vs.isPingInTime() {
-	// 	// todo change to new view
-	// 	if len(vs.idleServer) > 0 {
-	// 		vs.promoteToPrimary(vs.getIdleServer())
-	// 	}
-	// }
 	// remove idle which is out of date
 	//vs.removeIdle()
 	// either server crashed
 	vs.viewChange = false
-	t, ok := vs.mapPingTrack[vs.curView.Backup]
-	if ok && time.Now().Sub(t) > DeadPings*PingInterval {
-		if len(vs.idleServer) > 0 {
-			vs.promoteToBackup(vs.getIdleServer())
-		} else {
-			vs.removeBackup()
+	if vs.bAcked {
+		for k, t := range vs.mapPingTrack {
+			if time.Now().Sub(t) > DeadPings*PingInterval {
+				delete(vs.mapPingTrack, k)
+				if k == vs.curView.Primary {
+					vs.curView.Primary = ""
+					vs.promoteToPrimary()
+				} else if k == vs.curView.Backup {
+					vs.curView.Backup = ""
+					vs.promoteToBackup()
+				}
+			}
 		}
-	}
 
-	t, ok = vs.mapPingTrack[vs.curView.Primary]
-	if ok && time.Now().Sub(t) > DeadPings*PingInterval {
-		//fmt.Println("should come here")
-		// if vs.curView.Backup != "" {
-		// 	vs.promoteToPrimary(vs.curView.Backup)
-		// } else if len(vs.idleServer) > 0 {
-		// 	vs.promoteToPrimary(vs.getIdleServer())
-		// } else {
-		// 	vs.removePrimary()
-		// }
-		vs.promoteToPrimary()
-	}
+		// no backup and there is idle
+		if vs.curView.Primary != "" && vs.curView.Backup == "" {
+			vs.promoteToBackup()
+		}
+		if vs.curView.Primary == "" && vs.curView.Backup != "" {
+			vs.promoteToPrimary()
+		}
+		//vs.muIdle.Lock()
+		// remove duplicate idle servers if they are still in use
 
-	// no backup and there is idle
-	if vs.curView.Primary != "" && vs.curView.Backup == "" {
+		if vs.viewChange {
+			vs.nView++
+			vs.curView = View{vs.nView, vs.curView.Primary, vs.curView.Backup}
+		}
+		vs.print()
 		if DEBUG {
-			fmt.Printf("\tadd backup:%d\n", len(vs.idleServer))
+			fmt.Println("\nend of tick")
 		}
+	}
 
-		if len(vs.idleServer) > 0 {
-			vs.addBackup(vs.getIdleServer())
-		}
-	}
-	//vs.muIdle.Lock()
-	// remove duplicate idle servers if they are still in use
-	t, ok = vs.mapPingTrack[vs.curView.Primary]
-	if ok && time.Now().Sub(t) < DeadPings*PingInterval {
-		//vs.bAcked = true
-		_, ok := vs.idleServer[vs.curView.Primary]
-		if ok {
-			fmt.Println("find primary server in idle")
-			delete(vs.idleServer, vs.curView.Primary)
-		}
-	}
-	// vs.muIdle.Unlock()
-	// vs.muIdle.Lock()
-	t, ok = vs.mapPingTrack[vs.curView.Backup]
-	if ok && time.Now().Sub(t) < DeadPings*PingInterval {
-		_, ok := vs.idleServer[vs.curView.Backup]
-		if ok {
-			fmt.Println("find bakcup server in idle")
-			delete(vs.idleServer, vs.curView.Backup)
-		} else {
-			//fmt.Println("try to find bakcup server in idle but failed")
-		}
-	}
-	if vs.viewChange {
-		vs.nView++
-		vs.curView = View{vs.nView, vs.curView.Primary, vs.curView.Backup}
-	}
-	if DEBUG {
-		fmt.Println("in tick")
-	}
-	vs.print()
-	if DEBUG {
-		fmt.Println("\nend of tick")
-	}
 	//vs.muIdle.Unlock()
 	vs.mu.Unlock()
 }
@@ -418,7 +333,7 @@ func StartServer(me string) *ViewServer {
 	vs.bAcked = false
 	vs.nView = 0
 	vs.curView = View{0, "", ""}
-	vs.idleServer = make(map[string]int)
+	//vs.idleServer = make(map[string]int)
 	vs.viewChange = false
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()
