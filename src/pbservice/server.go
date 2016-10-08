@@ -87,7 +87,7 @@ func (pb *PBServer) debugPrintf(format string, a ...interface{}) {
 	}
 }
 
-func (pb *PBServer) putAppendHelp(args *PutAppendArgs, reply *PutAppendReply) {
+func (pb *PBServer) putAppendHelp(args *PutAppendArgs) string {
 	key, value := args.Key, args.Value
 	v, ok := pb.kv[key]
 	if ok {
@@ -96,60 +96,49 @@ func (pb *PBServer) putAppendHelp(args *PutAppendArgs, reply *PutAppendReply) {
 			buffer.WriteString(v)
 		}
 		buffer.WriteString(value)
-		pb.kv[key] = buffer.String()
-		reply.Err = OK
+		return buffer.String()
 	} else {
-		pb.kv[key] = value
-		reply.Err = ErrNoKey
+		return value
 	}
-	pb.uid[args.Id] = args.Key + args.Value
-	pb.print()
 }
 
 func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
 	pb.mu.Lock()
+	defer pb.mu.Unlock()
 
 	pb.debugPrintf("RPC PutAppend before dbsize:%d\t%t\t%v:%v\n", len(pb.kv), pb.isPrimary(), args.Key, args.Value)
 
 	if pb.isPrimary() {
 		//key, value := args.Key, args.Value
 		if pb.uid[args.Id] == "" {
-			pb.putAppendHelp(args, reply)
 			// send to backup
-			// pb.mu.Unlock()
-			// pb.mu.Lock()
 			if pb.curView.Backup != "" {
 				okUpdate := false
 				//curBackup := pb.curView.Backup
 				//curPrimary := pb.curView.Primary
 				// args.Update = false
-				for !okUpdate && pb.curView.Backup != "" {
-					//pb.debugPrintln("test4")
-					// if curPrimary != pb.curView.Primary {
-					// 	curPrimary = pb.curView.Primary
-					// 	// backup is changed outside, we need to forward the rpc to primary either
-					// 	if pb.isPrimary() {
-					// 		if pb.uid[args.Id] == "" {
-					// 			pb.debugPrintln("server reput append " + curPrimary + " " + args.Key + " " + args.Value + " " + strconv.FormatInt(args.Id, 10))
-					// 			pb.putAppendHelp(args, reply)
-					// 		} else {
-					// 			ok := false
-					// 			for !ok || (reply.Err == ErrWrongServer) {
-					// 				pb.debugPrintln("server resend put append " + curPrimary + " " + args.Key + " " + args.Value + " " + strconv.FormatInt(args.Id, 10))
-					// 				ok = call(curPrimary, "PBServer.PutAppend", args, &reply)
-					// 			}
-					// 		}
-					// 	}
-					// }
-					pb.mu.Unlock()
-					pb.mu.Lock()
-					pb.debugPrintln("forward to backup:" + pb.curView.Backup + "\t" + args.Key + ":" + args.Value)
-					okUpdate = call(pb.curView.Backup, "PBServer.Update", args, &reply)
+				// for !okUpdate && pb.curView.Backup != "" {
+				// 	pb.mu.Unlock()
+				// 	pb.mu.Lock()
+				pb.debugPrintln("forward to backup:" + pb.curView.Backup + "\t" + args.Key + ":" + args.Value)
 
+				updateArgs := &PutAppendArgs{args.Key, pb.putAppendHelp(args), "Put", args.Update, args.Id}
+				okUpdate = call(pb.curView.Backup, "PBServer.Update", updateArgs, &reply)
+				// sth wrong with the update rpc
+				if !okUpdate || reply.Err == ErrWrongServer {
+					reply.Err = ErrWrongServer
+					return nil
 				}
+				//}
+			} else {
+				reply.Err = OK
 			}
+			pb.kv[args.Key] = pb.putAppendHelp(args)
+			pb.uid[args.Id] = args.Key + args.Value
+			pb.print()
+
 		} else {
 			reply.Err = OK
 		}
@@ -158,7 +147,6 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 		reply.Err = ErrWrongServer
 	}
 
-	defer pb.mu.Unlock()
 	return nil
 }
 
@@ -172,26 +160,27 @@ func (pb *PBServer) Update(args *PutAppendArgs, reply *PutAppendReply) error {
 	}
 	if !pb.isPrimary() {
 		key, value := args.Key, args.Value
-		if args.Update || pb.uid[args.Id] == "" {
-			v, ok := pb.kv[key]
-			if ok {
-				var buffer bytes.Buffer
-				if args.Op == "Append" {
-					buffer.WriteString(v)
-				}
-				buffer.WriteString(value)
-				pb.kv[key] = buffer.String()
-				// if args.Op != "Append" {
-				// 	v = ""
-				// }
-				// pb.kv[key] = v + value
-				reply.Err = OK
-			} else {
-				pb.kv[key] = value
-				reply.Err = ErrNoKey
+		//if args.Update || pb.uid[args.Id] == "" {
+		v, ok := pb.kv[key]
+		if ok {
+			var buffer bytes.Buffer
+			if args.Op == "Append" {
+				buffer.WriteString(v)
 			}
-			pb.uid[args.Id] = args.Key + args.Value
+			buffer.WriteString(value)
+			pb.kv[key] = buffer.String()
+			// if args.Op != "Append" {
+			// 	v = ""
+			// }
+			// pb.kv[key] = v + value
+			//reply.Err = OK
+		} else {
+			pb.kv[key] = value
+			//reply.Err = OK
 		}
+		pb.uid[args.Id] = args.Key + args.Value
+		//}
+		reply.Err = OK
 	} else {
 		reply.Err = ErrWrongServer
 	}
@@ -227,6 +216,7 @@ func (pb *PBServer) UpdateAll(args *UpdateAppendArgs, reply *UpdateAppendReply) 
 		for k, v := range args.Uid {
 			pb.uid[k] = v
 		}
+		reply.Err = OK
 	} else {
 		reply.Err = ErrWrongServer
 	}

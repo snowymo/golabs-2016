@@ -11,12 +11,14 @@ import "math/big"
 
 import (
 	"strconv"
+	"sync"
 )
 
 type Clerk struct {
 	vs *viewservice.Clerk
 	// Your declarations here
 	cachePrimary string
+	mu           sync.Mutex
 }
 
 // this may come in handy.
@@ -79,6 +81,8 @@ func call(srv string, rpcname string,
 func (ck *Clerk) Get(key string) string {
 
 	// Your code here.
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
 	if ck.cachePrimary == "" {
 		ck.cachePrimary = ck.vs.Primary()
 	}
@@ -88,10 +92,10 @@ func (ck *Clerk) Get(key string) string {
 	var reply GetReply
 	ok := false
 
-	for !ok || (reply.Err == ErrWrongServer) {
+	for !ok || (reply.Err != OK) {
 		ok = call(ck.cachePrimary, "PBServer.Get", args, &reply)
 		//	time.Sleep(viewservice.PingInterval)
-		if !ok || (reply.Err == ErrWrongServer) {
+		if !ok || (reply.Err != OK) {
 			ck.cachePrimary = ck.vs.Primary()
 		}
 
@@ -106,6 +110,9 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 	// Your code here.
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
 	if ck.cachePrimary == "" {
 		ck.cachePrimary = ck.vs.Primary()
 	}
@@ -118,14 +125,19 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Id = nrand()
 	var reply PutAppendReply
 	ok := false
-	for !ok || (reply.Err == ErrWrongServer) {
+	for !ok || (reply.Err != OK) {
 		if DEBUG {
 			fmt.Println("client put append " + ck.cachePrimary + " " + args.Key + " " + args.Value + " " + args.Op + " " + strconv.FormatInt(args.Id, 10))
 		}
 		ok = call(ck.cachePrimary, "PBServer.PutAppend", args, &reply)
+		//fmt.Printf("ok:")
+		//fmt.Println(ok)
+		//fmt.Printf("reply.err:")
+		//fmt.Println(reply.Err)
 		//time.Sleep(viewservice.PingInterval)
-		if !ok || (reply.Err == ErrWrongServer) {
+		if !ok || (reply.Err != OK) {
 			ck.cachePrimary = ck.vs.Primary()
+			//fmt.Println("new primary:" + ck.cachePrimary)
 		}
 
 	}
