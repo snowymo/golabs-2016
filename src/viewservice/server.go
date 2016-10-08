@@ -178,7 +178,7 @@ func (vs *ViewServer) promoteToPrimary() {
 			vs.curView = View{vs.nView, vs.curView.Backup, vs.getIdleServer()}
 			//}
 		} else {
-			fmt.Println("FAIL should not happen")
+			//fmt.Println("FAIL should not happen")
 			vs.removePrimary()
 		}
 		vs.bAcked = false
