@@ -44,6 +44,12 @@ const (
 	Forgotten      // decided but forgotten.
 )
 
+type Agreement struct{
+//	seq	int
+	value	interface{}
+	status	Fate
+}
+
 type Paxos struct {
 	mu         sync.Mutex
 	l          net.Listener
@@ -55,6 +61,8 @@ type Paxos struct {
 
 
 	// Your data here.
+	agreem	map[int]*Agreement
+	doneSeq	int
 }
 
 //
@@ -103,6 +111,11 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 //
 func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
+//	px.agreem[seq] = Agreement
+	if seq >= px.doneSeq{
+		px.agreem[seq].value = v
+		px.agreem[seq].status = Pending
+	}
 }
 
 //
@@ -113,6 +126,31 @@ func (px *Paxos) Start(seq int, v interface{}) {
 //
 func (px *Paxos) Done(seq int) {
 	// Your code here.
+/*	minpend :=  32767
+	for k,v := range px.agreem{
+		if v.status == Pending{
+			if k < minpend{
+				minpend = k
+			}
+		}
+	}
+	maxdecide := -1
+	for k,v := range px.agreem{
+		if v.status != Pending{
+			if k > maxdecide{
+				maxdecide = k
+			}
+		}
+	}
+	return maxdecide
+*/
+	px.doneSeq = seq
+	// discard 
+	for k,v := range px.agreem{
+			if k < seq{
+				v.status = Forgotten
+			}
+	}
 }
 
 //
@@ -122,7 +160,13 @@ func (px *Paxos) Done(seq int) {
 //
 func (px *Paxos) Max() int {
 	// Your code here.
-	return 0
+	maxseq := -1
+	for k,_ := range px.agreem{
+		if k > maxseq{
+			maxseq = k
+		}
+	}
+	return maxseq
 }
 
 //
@@ -155,7 +199,18 @@ func (px *Paxos) Max() int {
 //
 func (px *Paxos) Min() int {
 	// You code here.
-	return 0
+	
+/*
+	for i := 0; i < px.peers.size(); i++{
+		if i != me{
+			ok := false
+			while !ok{
+				ok := call(px.peers[i], "Done", args interface{}, reply interface{})
+			}
+			peermin := reply.
+		}
+	}*/
+	return px.doneSeq+1
 }
 
 //
@@ -167,6 +222,10 @@ func (px *Paxos) Min() int {
 //
 func (px *Paxos) Status(seq int) (Fate, interface{}) {
 	// Your code here.
+	agr,ok := px.agreem[seq]
+	if(ok){
+		return agr.status, agr.value
+	}
 	return Pending, nil
 }
 
@@ -216,6 +275,8 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 
 
 	// Your initialization code here.
+	px.agreem = make(map[int]*Agreement)
+	px.doneSeq = -1
 
 	if rpcs != nil {
 		// caller will create socket &c
