@@ -32,6 +32,9 @@ import "fmt"
 import "math/rand"
 
 import "time"
+import (
+	"reflect"
+)
 
 // px.Status() return values, indicating
 // whether an agreement has been decided,
@@ -39,7 +42,8 @@ import "time"
 // or it was agreed but forgotten (i.e. < Min()).
 type Fate int
 
-const DEBUG = false
+var DEBUG = true
+var TESTFOR = true
 
 const (
 	Decided   Fate = iota + 1
@@ -66,17 +70,26 @@ type Paxos struct {
 
 func (px *Paxos) print() {
 	if DEBUG {
-		fmt.Printf("me:\t%d\n", px.me)
-		fmt.Printf("propose no:%d\n", px.proposalNo)
-		for k, v := range px.propWseq {
-			fmt.Printf("seq-%d: prop-%v\n", k, v)
-		}
+		//px.mu.Lock()
+		//fmt.Printf("me:\t%d\n", px.me)
+		// fmt.Printf("propose no:%d\n", px.proposalNo)
+		// for k, v := range px.propWseq {
+		// 	fmt.Printf("seq-%d: prop-%v\n", k, v<<8|px.me)
+		// }
 		//fmt.Println("decision:")
 		for k, v := range px.agreem {
-			fmt.Printf("decision:\tseq-%d: v-%v\tsta-%d\thighp-%d\thighA-%d\n", k, v.value, v.status, v.highP, v.highA)
+
+			if TESTFOR {
+				//value = ""
+				fmt.Printf("me:%d\tdecision:\tseq-%d: vsize-%d sta-%d\thighp-%d\thighA-%d\n", px.me, k, reflect.TypeOf(v.value).Size(), v.status, v.highP, v.highA)
+			} else {
+				fmt.Printf("me:%d\tdecision:\tseq-%d: v-%v\tsta-%d\thighp-%d\thighA-%d\n", px.me, k, v.value, v.status, v.highP, v.highA)
+			}
+
 		}
 
 		fmt.Println("\n")
+		//px.mu.Unlock()
 	}
 
 }
@@ -140,14 +153,22 @@ func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
 	//	px.agreem[seq] = Agreement
 	px.mu.Lock()
-	defer px.mu.Unlock()
+
 	if seq >= px.doneSeq {
 		_, ok := px.agreem[seq]
 		if !ok {
+			px.debugPrintf("Start %d: %d NOT FOUND and clear\n", px.me, seq)
 			px.agreem[seq] = &Agreement{v, Pending, -1, -1}
 		}
 	}
-	px.debugPrintf("Start: before propose %d\t%v\n", seq, v)
+
+	if TESTFOR {
+		px.debugPrintf("Start: before propose %d\t\n", seq)
+	} else {
+		px.debugPrintf("Start: before propose %d\t%v\n", seq, v)
+	}
+	px.mu.Unlock()
+
 	go px.Propose(seq, v)
 	return
 }
@@ -191,24 +212,32 @@ func (px *Paxos) Max() int {
 	return maxseq
 }
 
-func (px *Paxos) forgetFree() {
-	bFree := true
-	for bFree {
-		bFree = false
-		for k, v := range px.agreem {
-			if v.status == Forgotten {
-				delete(px.agreem, k)
-				bFree = true
-				break
-			}
+func (px *Paxos) forgetFree(minseq int) {
+	px.print()
+	// bFree := true
+	// for bFree {
+	// 	bFree = false
+	// 	for k, v := range px.agreem {
+	// 		if (v.status == Forgotten) && (k <= minseq) {
+	// 			delete(px.agreem, k)
+	// 			bFree = true
+	// 			break
+	// 		}
+	// 	}
+	// }
+
+	for k, v := range px.agreem {
+		if (v.status == Forgotten) && (k <= minseq) {
+			px.agreem[k].value = ""
 		}
 	}
+	px.print()
 }
 
 func (px *Paxos) GetDone(args *GetDoneArgs, reply *GetDoneReply) error {
 	px.mu.Lock()
 	defer px.mu.Unlock()
-	px.debugPrintf("GetDone %d:%d\n", px.me, px.doneSeq)
+	px.debugPrintf("GetDone RPC %d:%d\n", px.me, px.doneSeq)
 	reply.DoneSeq = px.doneSeq
 	return nil
 }
@@ -261,20 +290,20 @@ func (px *Paxos) Min() int {
 					minseq = reply.DoneSeq
 				}
 			} else {
-				px.debugPrintf("Min:%d\n", px.minSeq)
+				px.debugPrintf("Min: cannot contact some and ret %d\n", px.minSeq)
 				return px.minSeq
 			}
 		}
 	}
-	px.minSeq = minseq + 1
+	//px.minSeq = minseq + 1
 	for k, v := range px.agreem {
-		if k < px.minSeq {
+		if k <= minseq {
 			v.status = Forgotten
 		}
 	}
-	//px.forgetFree()
-	px.debugPrintf("Min:%d\n", px.minSeq)
-	return px.minSeq
+	px.debugPrintf("Min:%d\n", minseq+1)
+	px.forgetFree(minseq)
+	return minseq + 1
 }
 
 //
@@ -290,8 +319,16 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 	defer px.mu.Unlock()
 	agr, ok := px.agreem[seq]
 	if ok {
+
+		if TESTFOR {
+			px.debugPrintf("Status %d:\t%d\n", seq, agr.status)
+		} else {
+			px.debugPrintf("Status %d:\t%d\t%v\n", seq, agr.status, agr.value)
+		}
+
 		return agr.status, agr.value
 	}
+	px.debugPrintf("Status %d:\tnot exist\n", seq)
 	return Pending, nil
 }
 
@@ -335,7 +372,7 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	if !ok {
 		px.debugPrintf("Prepare RPC %d: new for this seq-%d with prop-%d\n", px.me, args.Seq, args.N)
 		px.agreem[seq] = &Agreement{"", Pending, args.N, -1}
-		agr = px.agreem[seq]
+		//agr = px.agreem[seq]
 
 		if px.cmpProposalNo(args.N) {
 			px.updateProposalNo(args.N)
@@ -369,14 +406,21 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 }
 
 func (px *Paxos) prepareNo(seq int) int {
+	px.mu.Lock()
+	defer px.mu.Unlock()
+	px.debugPrintf("prepareNo %d: seq-%d N-%d\n", px.me, seq, px.propWseq[seq]<<8|px.me)
 	return px.propWseq[seq]<<8 | px.me
 }
 
 // phase prepare
 func (px *Paxos) preparePhase(seq int, value interface{}) int {
+	//px.mu.Lock()
+	//defer px.mu.Unlock()
 	_, ok := px.agreem[seq]
 	if !ok {
-		px.agreem[seq] = &Agreement{"", Pending, -1, -1}
+		px.debugPrintf("preparePhase %d: not found in agreement\n", seq)
+		return 0
+		//px.agreem[seq] = &Agreement{"", Pending, -1, -1}
 	}
 
 	if px.agreem[seq].status != Pending {
@@ -387,17 +431,28 @@ func (px *Paxos) preparePhase(seq int, value interface{}) int {
 	//args.N =
 	//args.seq =
 	var reply PrepareReply
-	px.debugPrintf("preparePhase: prepare args seq-%v\tval-%v\tprop-%d\n", args.Seq, value, args.N)
+
+	if TESTFOR {
+		//value = ""
+		//px.debugPrintf("preparePhase: prepare args seq-%v\tval_sz-%d\tprop-%d\n", args.Seq, reflect.TypeOf(value).Size(), args.N)
+	} else {
+		//px.debugPrintf("preparePhase: prepare args seq-%v\tval-%v\tprop-%d\n", args.Seq, value, args.N)
+	}
+
 	prepareCnt := 0
 	//highA := seq
 	//highV := value
 
 	// send to itself
-	px.debugPrintln("preparePhase: prepare itself")
+	//.debugPrintln("preparePhase: prepare itself")
+	//px.mu.Unlock()
 	px.Prepare(args, &reply)
+	//px.mu.Lock()
 	if reply.OK == OK {
 		prepareCnt++
 	}
+	reply.OK = NOK
+	//px.mu.Lock()
 	// send prepare rpc to other peers
 	//px.debugPrintf("preparePhase: prepare peers seq-%d\tval-%v\tprop-%d len:%d\n", args.seq, value, args.N, len(px.peers))
 	for i, p := range px.peers {
@@ -405,33 +460,48 @@ func (px *Paxos) preparePhase(seq int, value interface{}) int {
 			//px.debugPrintf("preparePhase: in range peers %d:%v before call\n", i, p)
 			//args := &PrepareArgs{}
 			//var reply PrepareReply
-			px.debugPrintf("preparePhase: prepare peers seq-%d\tval-%v\tprop-%d idx:%d\n", args.Seq, value, args.N, i)
+
+			if TESTFOR {
+				//value = ""
+				//px.debugPrintf("preparePhase: prepare peers seq-%d\tval_sz-%d\tprop-%d idx:%d\n", args.Seq, reflect.TypeOf(value).Size(), args.N, i)
+			} else {
+				//px.debugPrintf("preparePhase: prepare peers seq-%d\tval-%v\tprop-%d idx:%d\n", args.Seq, value, args.N, i)
+			}
+
 			ok := call(p, "Paxos.Prepare", args, &reply)
 			px.debugPrintf("reply:%v %d\n", reply.OK, reply.NHigh)
 			if ok && reply.OK == OK {
 				prepareCnt++
 
+				px.mu.Lock()
 				_, ok := px.agreem[seq]
 				if !ok {
+					px.debugPrintf("preparePhase %d: %d NOT FOUND and clear\n", px.me, seq)
 					px.agreem[seq] = &Agreement{"", Pending, -1, -1}
+					return 0
 				}
 
 				if reply.NAccept > px.agreem[seq].highA {
 					px.agreem[seq].highA = reply.NAccept
 					px.agreem[seq].value = reply.Value
 				}
+				px.mu.Unlock()
 			} else if ok && reply.OK != OK {
 				// out-of-date peer need to catch up
 				//if px.proposalNo < reply.NHigh>>8 {
+				px.mu.Lock()
 				px.proposalNo = reply.NHigh >> 8
-				px.agreem[seq].highP = reply.NHigh
-				args.N = reply.NHigh
+				if reply.NHigh > px.agreem[seq].highP {
+					px.agreem[seq].highP = reply.NHigh
+				}
+				px.mu.Unlock()
+				//args.N = reply.NHigh
 				//}
 			}
 		}
 	}
-
-	px.debugPrintf("preparePhase: finish prepare peers maj:%d\n", prepareCnt)
+	//px.mu.Unlock()
+	px.debugPrintf("preparePhase %d: seq-%d\tfinish prepare peers maj:%d\n", px.me, seq, prepareCnt)
 	return prepareCnt
 }
 
@@ -459,12 +529,22 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 }
 
 func (px *Paxos) acceptPhase(seq int) int {
+
 	_, ok := px.agreem[seq]
 	if !ok {
+		px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
 		return 0
 	}
 
-	args := &AcceptArgs{seq, px.agreem[seq].highP, px.agreem[seq].value}
+	args := &AcceptArgs{seq, px.prepareNo(seq), px.agreem[seq].value}
+
+	if TESTFOR {
+		// value = ""
+		px.debugPrintf("acceptPhase: accept args seq-%v\tval_sz-%d\tprop-%d\n", args.Seq, reflect.TypeOf(args.Value).Size(), args.N)
+	} else {
+		px.debugPrintf("acceptPhase: accept args seq-%v\tval-%v\tprop-%d\n", args.Seq, args.Value, args.N)
+	}
+
 	var reply AcceptReply
 
 	acceptCnt := 0
@@ -474,6 +554,10 @@ func (px *Paxos) acceptPhase(seq int) int {
 	if reply.OK {
 		acceptCnt++
 	}
+	reply.OK = false
+
+	// px.mu.Lock()
+	// defer px.mu.Unlock()
 	// send accept rpc to other peers
 	for i, p := range px.peers {
 		if i != px.me {
@@ -489,7 +573,7 @@ func (px *Paxos) acceptPhase(seq int) int {
 			// }
 		}
 	}
-	px.debugPrintf("acceptPhase: finish Accept peers maj:%d\n", acceptCnt)
+	px.debugPrintf("acceptPhase %d: seq-%d\tfinish Accept peers maj:%d\n", px.me, seq, acceptCnt)
 	return acceptCnt
 }
 
@@ -497,7 +581,8 @@ func (px *Paxos) Decide(args *DecideArgs, reply *DecideReply) error {
 	px.mu.Lock()
 	defer px.mu.Unlock()
 
-	px.debugPrintf("Decide RPC %d: seq-%d\t%v\n", px.me, args.Seq, args.Value)
+	// px.debugPrintf("Decide RPC %d: seq-%d\t%v\n", px.me, args.Seq, args.Value)
+	px.debugPrintf("Decide RPC %d: seq-%d\n", px.me, args.Seq)
 	_, ok := px.agreem[args.Seq]
 	if ok {
 		px.agreem[args.Seq].status = Decided
@@ -513,15 +598,17 @@ func (px *Paxos) Decide(args *DecideArgs, reply *DecideReply) error {
 }
 
 func (px *Paxos) decidePhase(seq int) {
+
 	_, ok := px.agreem[seq]
 	if !ok {
+		px.debugPrintf("decidePhase %d: not found in agreement\n", seq)
 		// px.agreem[args.Seq] = &Agreement{"", Pending, args.N, -1}
 		return
 	}
 
 	args := &DecideArgs{}
 	args.Seq = seq
-	args.N = px.agreem[seq].highP
+	args.N = px.prepareNo(seq)
 	args.Value = px.agreem[seq].value
 	var reply DecideReply
 
@@ -530,6 +617,8 @@ func (px *Paxos) decidePhase(seq int) {
 	// if reply.OK {
 	// 	acceptCnt++
 	// }
+	// px.mu.Lock()
+	// defer px.mu.Unlock()
 	// send accept rpc to other peers
 	for i, p := range px.peers {
 		if i != px.me {
@@ -545,45 +634,61 @@ func (px *Paxos) decidePhase(seq int) {
 func (px *Paxos) generateNo(seq int) int {
 	px.mu.Lock()
 	defer px.mu.Unlock()
-	//px.debugPrintf("Propose ProposalNo\t%d\n", px.proposalNo)
 	px.proposalNo = px.proposalNo + 1 //rand.Int()%3 + 1
 	//px.agreem[seq].highP = px.proposalNo
-	px.debugPrintf("Propose ProposalNo\t%d\n", px.proposalNo)
+	//px.debugPrintf("Propose ProposalNo\t%d\n", px.proposalNo)
 	px.propWseq[seq] = px.proposalNo
+	px.debugPrintf("generateNo %d: ProposalNo\t%d\n", px.me, px.proposalNo)
 	return px.proposalNo
 }
 
 // do propose
 func (px *Paxos) Propose(seq int, value interface{}) {
+	//px.mu.Lock()
 	_, ok := px.agreem[seq]
 	if !ok {
-		px.agreem[seq] = &Agreement{"", Pending, -1, -1}
+		px.debugPrintf("Propose %d: NOT FOUND and clear\n", px.me, seq)
+		px.agreem[seq] = &Agreement{value, Pending, -1, -1}
 	}
-	for px.agreem[seq].status == Pending {
+
+	// for ok && px.agreem[seq].status == Pending {
+	for ok {
 		// choose n, unique and higher than any n seen so far
 
 		//px.agreem[seq].prono = px.proposalNo
-		px.debugPrintf("Propose %d: seq-%d before prepare phase\n", px.me, seq)
+		//px.debugPrintf("Propose %d: seq-%d before prepare phase\n", px.me, seq)
+		//px.mu.Unlock()
 		px.generateNo(seq)
 		prepareCnt := px.preparePhase(seq, value)
 		acceptCnt := 0
 		// send accept rpc to other peers
 		if prepareCnt > len(px.peers)/2.0 {
-			px.debugPrintln("Propose: before accept phase")
+			//px.debugPrintln("Propose: before accept phase")
 			acceptCnt = px.acceptPhase(seq)
 		}
 		if acceptCnt > len(px.peers)/2.0 {
 			// send decide to all
-			px.debugPrintln("Propose: before decide phase")
+			//px.debugPrintln("Propose: before decide phase")
 			px.decidePhase(seq)
+			ok = false
 		}
-		time.Sleep(time.Millisecond * 100 * time.Duration(px.me))
+		time.Sleep(time.Millisecond * 5 * time.Duration(px.me))
 
-		_, ok = px.agreem[seq]
-		if !ok {
-			px.agreem[seq] = &Agreement{"", Pending, -1, -1}
-		}
+		// _, ok = px.agreem[seq]
+		// if !ok {
+		// 	px.agreem[seq] = &Agreement{"", Pending, -1, -1}
+		// }
+		//px.mu.Lock()
+		//_, ok = px.agreem[seq]
 	}
+	// seq is already decided, try send proposal to undecided ins
+	// for k, v := range px.agreem {
+	// 	if v.status == Pending {
+	// 		px.debugPrintf("FOR LEARN %d: seq-%d", px.me, k)
+	// 		go px.Propose(k, v.value)
+	// 	}
+	// }
+	//px.mu.Unlock()
 	//px.Done(seq)
 }
 
