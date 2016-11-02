@@ -491,9 +491,10 @@ func (px *Paxos) preparePhase(seq int, value interface{}) int {
 				//if px.proposalNo < reply.NHigh>>8 {
 				px.mu.Lock()
 				px.proposalNo = reply.NHigh >> 8
-				if reply.NHigh > px.agreem[seq].highP {
-					px.agreem[seq].highP = reply.NHigh
-				}
+				// when propose and meet a higher propose no. we do not need to record that, we only need to improve our round
+				// if reply.NHigh > px.agreem[seq].highP {
+				// 	px.agreem[seq].highP = reply.NHigh
+				// }
 				px.mu.Unlock()
 				//args.N = reply.NHigh
 				//}
