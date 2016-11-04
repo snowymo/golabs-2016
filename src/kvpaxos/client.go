@@ -3,12 +3,13 @@ package kvpaxos
 import "net/rpc"
 import "crypto/rand"
 import "math/big"
-
+import "sync"
 import "fmt"
 
 type Clerk struct {
 	servers []string
 	// You will have to modify this struct.
+	mu sync.Mutex
 }
 
 func nrand() int64 {
@@ -22,6 +23,7 @@ func MakeClerk(servers []string) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+
 	return ck
 }
 
@@ -66,7 +68,19 @@ func call(srv string, rpcname string,
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
-	return ""
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
+	args := &GetArgs{key}
+
+	var reply GetReply
+	ok := false
+	for !ok || (reply.Err != OK) {
+		curSerId := int(nrand()) % len(ck.servers)
+		DPrintf("client Get to server: %d key-%v\n", curSerId, args.Key)
+		ok = call(ck.servers[curSerId], "KVPaxos.Get", args, &reply)
+	}
+	return reply.Value
 }
 
 //
@@ -74,6 +88,18 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
+	args := &PutAppendArgs{key, value, op, nrand()}
+
+	var reply PutAppendReply
+	ok := false
+	for !ok || (reply.Err != OK) {
+		curSerId := int(nrand()) % len(ck.servers)
+		DPrintf("client PutAppend to server: %d key-%v\tval-%v\n", curSerId, args.Key, args.Value)
+		ok = call(ck.servers[curSerId], "KVPaxos.PutAppend", args, &reply)
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {

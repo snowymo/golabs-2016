@@ -11,22 +11,32 @@ import "os"
 import "syscall"
 import "encoding/gob"
 import "math/rand"
+import "time"
 
-
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
-		log.Printf(format, a...)
+		// log.Printf(format, a...)
+		fmt.Printf(format, a...)
 	}
 	return
 }
 
+func (kv *KVPaxos) printdb() {
+	DPrintf("print db:\t%d\n", kv.me)
+	for key, value := range kv.db {
+		DPrintf("Key: %v Value: %v\n", key, value)
+	}
+}
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Oper  string
+	Key   string
+	Value string
 }
 
 type KVPaxos struct {
@@ -38,16 +48,85 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
+	db map[string]string
 }
 
+func (kv *KVPaxos) interpretLog(insid int) {
+	var loglist []Op
+	loglist = make([]Op, 0)
+	// interpret the log before that point to make sure its key/value db reflects all recent put()s
+	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
+		DPrintf("interpretLog: call Status\t%d\n", pre_insid)
+		_, pre_v := kv.px.Status(pre_insid)
+		// if find a log is get then break
+		loglist = append(loglist, pre_v.(Op))
+		if pre_v.(Op).Oper == "Put" {
+			break
+		}
+	}
+	// figure out all the put/append from start or last get
+	for logidx := len(loglist) - 1; logidx >= 0; logidx-- {
+		logentry := loglist[logidx]
+		if logentry.Oper == "Put" {
+			kv.db[logentry.Key] = logentry.Value
+			DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, logentry.Value)
+		} else if logentry.Oper == "Append" {
+			kv.db[logentry.Key] += logentry.Value
+			DPrintf("interpretLog: app k-%v v-%v\n", logentry.Key, logentry.Value)
+		}
+	}
+	kv.printdb()
+}
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	insid := kv.px.Max() + 1
+
+	DPrintf("Get RPC %d: id-%d\tkey-%v\n", kv.me, insid, args.Key)
+	kv.px.Start(insid, Op{"Get", args.Key, ""})
+
+	to := 10 * time.Millisecond
+	for {
+		status, _ := kv.px.Status(insid)
+		if status == paxos.Decided {
+			kv.interpretLog(insid)
+			reply.Err = OK
+			reply.Value = kv.db[args.Key]
+			return nil
+		}
+		time.Sleep(to)
+		if to < 10*time.Second {
+			to *= 2
+		}
+	}
+
 	return nil
 }
 
 func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	// use paxos to allocate a ins, whose value includes k&v and other kvpaxoses know about put() and append()
+	insid := kv.px.Max() + 1
+	DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, args.Value)
+	kv.px.Start(insid, Op{args.Op, args.Key, args.Value})
+
+	to := 10 * time.Millisecond
+	for {
+		status, _ := kv.px.Status(insid)
+		if status == paxos.Decided {
+			reply.Err = OK
+			return nil
+		}
+		time.Sleep(to)
+		if to < 10*time.Second {
+			to *= 2
+		}
+	}
 
 	return nil
 }
@@ -94,6 +173,7 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
+	kv.db = make(map[string]string)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
@@ -106,7 +186,6 @@ func StartServer(servers []string, me int) *KVPaxos {
 		log.Fatal("listen error: ", e)
 	}
 	kv.l = l
-
 
 	// please do not change any of the following code,
 	// or do anything to subvert it.
