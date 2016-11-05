@@ -42,7 +42,7 @@ import (
 // or it was agreed but forgotten (i.e. < Min()).
 type Fate int
 
-var DEBUG = true
+var DEBUG = false
 var TESTFOR = false
 
 const (
@@ -197,7 +197,7 @@ func (px *Paxos) Done(seq int) {
 	px.doneSeq = seq
 	// discard
 	for k, v := range px.agreem {
-		if k < seq {
+		if k < seq && v.status != Forgotten {
 			v.status = Forgotten
 		}
 	}
@@ -628,16 +628,18 @@ func (px *Paxos) decidePhase(seq int) {
 	// px.mu.Lock()
 	// defer px.mu.Unlock()
 	// send accept rpc to other peers
+	px.mu.Unlock()
 	for i, p := range px.peers {
 		if i != px.me {
-			px.mu.Unlock()
+
 			call(p, "Paxos.Decide", args, &reply)
-			px.mu.Lock()
+
 			// if ok && reply.OK {
 			// 	acceptCnt++
 			// }
 		}
 	}
+	px.mu.Lock()
 	//return acceptCnt
 }
 

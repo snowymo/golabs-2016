@@ -13,6 +13,10 @@ import "encoding/gob"
 import "math/rand"
 import "time"
 
+// import (
+// 	"math"
+// )
+
 const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
@@ -26,8 +30,9 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 func (kv *KVPaxos) printdb() {
 	DPrintf("print db:\t%d\n", kv.me)
 	for key, value := range kv.db {
-		DPrintf("Key: %v Value: %v\n", key, value)
+		DPrintf("Key: %v Value: %v\n", key, ShrinkValue(value))
 	}
+	DPrintf("\n")
 }
 
 type Op struct {
@@ -48,34 +53,59 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
-	db map[string]string
+	db    map[string]string
+	valid []bool // true means it is still useful and false means do not need it
 }
 
 func (kv *KVPaxos) interpretLog(insid int) {
 	var loglist []Op
 	loglist = make([]Op, 0)
+	_, curLog := kv.px.Status(insid)
 	// interpret the log before that point to make sure its key/value db reflects all recent put()s
 	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
 		DPrintf("interpretLog: call Status\t%d\n", pre_insid)
 		_, pre_v := kv.px.Status(pre_insid)
 		// if find a log is get then break
 		loglist = append(loglist, pre_v.(Op))
-		if pre_v.(Op).Oper == "Put" {
+		if pre_v.(Op).Oper == "Put" && pre_v.(Op).Key == curLog.(Op).Key {
 			break
 		}
 	}
-	// figure out all the put/append from start or last get
+	// figure out all the put/append from start to last same key put
 	for logidx := len(loglist) - 1; logidx >= 0; logidx-- {
 		logentry := loglist[logidx]
 		if logentry.Oper == "Put" {
 			kv.db[logentry.Key] = logentry.Value
-			DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, logentry.Value)
+
+			DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, ShrinkValue(logentry.Value))
 		} else if logentry.Oper == "Append" {
 			kv.db[logentry.Key] += logentry.Value
-			DPrintf("interpretLog: app k-%v v-%v\n", logentry.Key, logentry.Value)
+			DPrintf("interpretLog: app k-%v v-%v\n", logentry.Key, ShrinkValue(logentry.Value))
 		}
 	}
 	kv.printdb()
+}
+
+func (kv *KVPaxos) MarkLog(oper Op, insid int) {
+	if oper.Oper == "Put" || oper.Oper == "Get" {
+		for pre_id := insid - 1; pre_id >= 0; pre_id-- {
+			_, pre_op := kv.px.Status(pre_id)
+			if pre_op.(Op).Oper == oper.Oper && pre_op.(Op).Key == oper.Key {
+				if kv.valid[pre_id] == false {
+					break
+				}
+				kv.valid[pre_id] = false
+			}
+		}
+	}
+	// find min valid and call Done and Min
+	for i, v := range kv.valid {
+		if v {
+			kv.px.Done(i - 1)
+			kv.px.Min()
+			break
+		}
+	}
 }
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
@@ -88,6 +118,11 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	DPrintf("Get RPC %d: id-%d\tkey-%v\n", kv.me, insid, args.Key)
 	kv.px.Start(insid, Op{"Get", args.Key, ""})
 
+	for len(kv.valid) < insid {
+		kv.valid = append(kv.valid, true)
+	}
+	kv.valid[insid] = true
+
 	to := 10 * time.Millisecond
 	for {
 		status, _ := kv.px.Status(insid)
@@ -95,6 +130,7 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 			kv.interpretLog(insid)
 			reply.Err = OK
 			reply.Value = kv.db[args.Key]
+			kv.MarkLog(Op{"Get", args.Key, ""}, insid)
 			return nil
 		}
 		time.Sleep(to)
@@ -112,7 +148,13 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	defer kv.mu.Unlock()
 	// use paxos to allocate a ins, whose value includes k&v and other kvpaxoses know about put() and append()
 	insid := kv.px.Max() + 1
-	DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, args.Value)
+
+	DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, ShrinkValue(args.Value))
+	for len(kv.valid) < insid {
+		kv.valid = append(kv.valid, true)
+	}
+	kv.valid[insid] = true
+
 	kv.px.Start(insid, Op{args.Op, args.Key, args.Value})
 
 	to := 10 * time.Millisecond
@@ -120,6 +162,7 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 		status, _ := kv.px.Status(insid)
 		if status == paxos.Decided {
 			reply.Err = OK
+			kv.MarkLog(Op{args.Op, args.Key, args.Value}, insid)
 			return nil
 		}
 		time.Sleep(to)
@@ -174,6 +217,7 @@ func StartServer(servers []string, me int) *KVPaxos {
 
 	// Your initialization code here.
 	kv.db = make(map[string]string)
+	kv.valid = make([]bool, 0)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
