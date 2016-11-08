@@ -42,4 +42,4 @@ func ShrinkValue(value string) string {
 	return value[0:lenth]
 }
 
-const MAXUID = 2 ^ 32
+const MAXUID = 4294967296
