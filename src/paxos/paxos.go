@@ -532,7 +532,9 @@ func (px *Paxos) acceptPhase(seq int, value interface{}) int {
 
 	agr, ok := px.agreem[seq]
 	if agr.value == nil {
-		agr.value = value
+		px.agreem[seq].value = value
+		agr = px.agreem[seq]
+		px.debugPrintf("acceptPhase seq-%d nil before now-\t%v\n", seq, px.agreem[seq].value)
 	}
 	if !ok {
 		//px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
