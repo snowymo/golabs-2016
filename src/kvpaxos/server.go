@@ -61,19 +61,31 @@ func (kv *KVPaxos) interpretLog(insid int) {
 	var loglist []Op
 	loglist = make([]Op, 0)
 	_, curLog := kv.px.Status(insid)
+	to := 10 * time.Millisecond
 	// interpret the log before that point to make sure its key/value db reflects all recent put()s
 	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
 		DPrintf("interpretLog: call Status\t%d\n", pre_insid)
-		_, pre_v := kv.px.Status(pre_insid)
-		// if find a log is get then break
+		err, pre_v := kv.px.Status(pre_insid)
+		for err != 1{
+			err, pre_v = kv.px.Status(pre_insid)
+			time.Sleep(to)
+					if to < 10*time.Second {
+						to *= 2
+			}
+		}
+//		DPrintf("interpretLog: call status\t%d\n", err)
+		// if find a log is put then break
+		DPrintf("interpretLog: \t%d key-%v op-%v\n", pre_insid, pre_v.(Op).Key, pre_v.(Op).Oper)
 		loglist = append(loglist, pre_v.(Op))
 		if pre_v.(Op).Oper == "Put" && pre_v.(Op).Key == curLog.(Op).Key {
 			break
 		}
 	}
 	// figure out all the put/append from start to last same key put
+
 	for logidx := len(loglist) - 1; logidx >= 0; logidx-- {
 		logentry := loglist[logidx]
+		DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
 		if logentry.Oper == "Put" {
 			kv.db[logentry.Key] = logentry.Value
 
@@ -118,10 +130,10 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	DPrintf("Get RPC %d: id-%d\tkey-%v\n", kv.me, insid, args.Key)
 	kv.px.Start(insid, Op{"Get", args.Key, ""})
 
-	for len(kv.valid) < insid {
-		kv.valid = append(kv.valid, true)
-	}
-	kv.valid[insid] = true
+//	for len(kv.valid) < insid {
+//		kv.valid = append(kv.valid, true)
+//	}
+//	kv.valid[insid] = true
 
 	to := 10 * time.Millisecond
 	for {
@@ -130,7 +142,7 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 			kv.interpretLog(insid)
 			reply.Err = OK
 			reply.Value = kv.db[args.Key]
-			kv.MarkLog(Op{"Get", args.Key, ""}, insid)
+			//kv.MarkLog(Op{"Get", args.Key, ""}, insid)
 			return nil
 		}
 		time.Sleep(to)
@@ -150,10 +162,10 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	insid := kv.px.Max() + 1
 
 	DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, ShrinkValue(args.Value))
-	for len(kv.valid) < insid {
-		kv.valid = append(kv.valid, true)
-	}
-	kv.valid[insid] = true
+//	for len(kv.valid) < insid {
+//		kv.valid = append(kv.valid, true)
+//	}
+//	kv.valid[insid] = true
 
 	kv.px.Start(insid, Op{args.Op, args.Key, args.Value})
 
@@ -162,7 +174,7 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 		status, _ := kv.px.Status(insid)
 		if status == paxos.Decided {
 			reply.Err = OK
-			kv.MarkLog(Op{args.Op, args.Key, args.Value}, insid)
+			//kv.MarkLog(Op{args.Op, args.Key, args.Value}, insid)
 			return nil
 		}
 		time.Sleep(to)
