@@ -326,7 +326,7 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 		} else {
 			px.debugPrintf("Status %d:\t%v\t%v\n", seq, px.explainStatus(agr.status), agr.value)
 		}
-		px.print()
+		//px.print()
 
 		return agr.status, agr.value
 	}
@@ -531,13 +531,15 @@ func (px *Paxos) acceptPhase(seq int, value interface{}) int {
 	defer px.mu.Unlock()
 
 	agr, ok := px.agreem[seq]
-	if agr.value == nil {
+	if agr.value == "" {
 		px.agreem[seq].value = value
 		agr = px.agreem[seq]
 		px.debugPrintf("acceptPhase seq-%d nil before now-\t%v\n", seq, px.agreem[seq].value)
+	} else {
+		px.debugPrintf("acceptPhase seq-%d value-\t%v\n", seq, px.agreem[seq].value)
 	}
 	if !ok {
-		//px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
+		px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
 		return 0
 	}
 	if agr.status != Pending {
@@ -678,7 +680,8 @@ func (px *Paxos) Propose(seq int, value interface{}) {
 	// defer px.mu.Unlock()
 
 	ok := true
-
+	prepareCnt := 0
+	acceptCnt := 0
 	// for ok && px.agreem[seq].status == Pending {
 	for ok {
 		// choose n, unique and higher than any n seen so far
@@ -686,13 +689,14 @@ func (px *Paxos) Propose(seq int, value interface{}) {
 		//px.agreem[seq].prono = px.proposalNo
 		//px.debugPrintf("Propose %d: seq-%d before prepare phase\n", px.me, seq)
 		//px.mu.Unlock()
+		px.debugPrintf("previous prepare cnt:%d accept cnt:%d seq-%d\n", prepareCnt, acceptCnt, seq)
 
-		prepareCnt := px.preparePhase(seq, value)
+		prepareCnt = px.preparePhase(seq, value)
 		// not pending
-		// if prepareCnt == -1 {
-		// 	break
-		// }
-		acceptCnt := 0
+		if prepareCnt == -1 {
+			break
+		}
+		acceptCnt = 0
 		// send accept rpc to other peers
 		if prepareCnt > len(px.peers)/2.0 {
 			//px.debugPrintln("Propose: before accept phase")

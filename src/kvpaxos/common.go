@@ -26,6 +26,7 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	Id int64
 }
 
 type GetReply struct {
@@ -41,11 +42,4 @@ func ShrinkValue(value string) string {
 	return value[0:lenth]
 }
 
-type Fate int
-type Agreement struct {
-	//	seq	int
-	value  interface{}
-	status Fate
-	highP  int
-	highA  int
-}
+const MAXUID = 2 ^ 32

@@ -71,7 +71,7 @@ func (ck *Clerk) Get(key string) string {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 
-	args := &GetArgs{key}
+	args := &GetArgs{key, nrand() % MAXUID}
 
 	var reply GetReply
 	ok := false
@@ -91,7 +91,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
 
-	args := &PutAppendArgs{key, value, op, nrand()}
+	args := &PutAppendArgs{key, value, op, nrand() % MAXUID}
 
 	var reply PutAppendReply
 	ok := false
