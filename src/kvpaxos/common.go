@@ -40,3 +40,12 @@ func ShrinkValue(value string) string {
 	}
 	return value[0:lenth]
 }
+
+type Fate int
+type Agreement struct {
+	//	seq	int
+	value  interface{}
+	status Fate
+	highP  int
+	highA  int
+}

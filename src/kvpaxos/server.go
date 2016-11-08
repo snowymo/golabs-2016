@@ -35,6 +35,10 @@ func (kv *KVPaxos) printdb() {
 	DPrintf("\n")
 }
 
+func (kv *KVPaxos) printop(op Op) string {
+	return fmt.Sprintf("Op: Key: %v oper: %v Value: %v", op.Key, op.Oper, ShrinkValue(op.Value))
+}
+
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
@@ -66,34 +70,39 @@ func (kv *KVPaxos) interpretLog(insid int) {
 	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
 		DPrintf("interpretLog: call Status\t%d\n", pre_insid)
 		err, pre_v := kv.px.Status(pre_insid)
-		for err != 1{
+		for err != 1 {
 			err, pre_v = kv.px.Status(pre_insid)
 			time.Sleep(to)
-					if to < 10*time.Second {
-						to *= 2
+			if to < 10*time.Second {
+				to *= 2
 			}
 		}
-//		DPrintf("interpretLog: call status\t%d\n", err)
+		//		DPrintf("interpretLog: call status\t%d\n", err)
 		// if find a log is put then break
 		DPrintf("interpretLog: \t%d key-%v op-%v\n", pre_insid, pre_v.(Op).Key, pre_v.(Op).Oper)
 		loglist = append(loglist, pre_v.(Op))
 		if pre_v.(Op).Oper == "Put" && pre_v.(Op).Key == curLog.(Op).Key {
+			DPrintf("interpretLog:\t break size-%d key-%v\n", len(loglist), curLog.(Op).Key)
 			break
 		}
 	}
 	// figure out all the put/append from start to last same key put
-
+	DPrintf("interpretLog:\t size-%d key-%v\n", len(loglist), curLog.(Op).Key)
+	kv.db[curLog.(Op).Key] = ""
 	for logidx := len(loglist) - 1; logidx >= 0; logidx-- {
 		logentry := loglist[logidx]
 		DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
-		if logentry.Oper == "Put" {
-			kv.db[logentry.Key] = logentry.Value
+		if logentry.Key == curLog.(Op).Key {
+			if logentry.Oper == "Put" {
+				kv.db[logentry.Key] = logentry.Value
 
-			DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, ShrinkValue(logentry.Value))
-		} else if logentry.Oper == "Append" {
-			kv.db[logentry.Key] += logentry.Value
-			DPrintf("interpretLog: app k-%v v-%v\n", logentry.Key, ShrinkValue(logentry.Value))
+				DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+			} else if logentry.Oper == "Append" {
+				kv.db[logentry.Key] += logentry.Value
+				DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+			}
 		}
+
 	}
 	kv.printdb()
 }
@@ -125,25 +134,33 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
+	curProposal := Op{"Get", args.Key, ""}
+
 	insid := kv.px.Max() + 1
-
 	DPrintf("Get RPC %d: id-%d\tkey-%v\n", kv.me, insid, args.Key)
-	kv.px.Start(insid, Op{"Get", args.Key, ""})
+	kv.px.Start(insid, curProposal)
 
-//	for len(kv.valid) < insid {
-//		kv.valid = append(kv.valid, true)
-//	}
-//	kv.valid[insid] = true
-
+	// wait for decided
 	to := 10 * time.Millisecond
 	for {
-		status, _ := kv.px.Status(insid)
+		status, proposal := kv.px.Status(insid)
 		if status == paxos.Decided {
-			kv.interpretLog(insid)
-			reply.Err = OK
-			reply.Value = kv.db[args.Key]
-			//kv.MarkLog(Op{"Get", args.Key, ""}, insid)
-			return nil
+			DPrintf("Get seq-%d\tcurLog-%v\tstatusLop-%v\n", insid, kv.printop(curProposal), kv.printop(proposal.(Op)))
+			// check if it is exact the same propose
+			if proposal.(Op) == curProposal {
+				kv.interpretLog(insid)
+				reply.Err = OK
+				reply.Value = kv.db[args.Key]
+				//kv.MarkLog(Op{"Get", args.Key, ""}, insid)
+				return nil
+			} else {
+				// wrong proposal
+				insid = kv.px.Max() + 1
+				DPrintf("Get RPC %d: id-%d\tkey-%v\n", kv.me, insid, args.Key)
+				kv.px.Start(insid, curProposal)
+				to = 10 * time.Millisecond
+			}
+
 		}
 		time.Sleep(to)
 		if to < 10*time.Second {
@@ -158,24 +175,37 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	curProposal := Op{args.Op, args.Key, args.Value}
 	// use paxos to allocate a ins, whose value includes k&v and other kvpaxoses know about put() and append()
 	insid := kv.px.Max() + 1
 
 	DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, ShrinkValue(args.Value))
-//	for len(kv.valid) < insid {
-//		kv.valid = append(kv.valid, true)
-//	}
-//	kv.valid[insid] = true
+	//	for len(kv.valid) < insid {
+	//		kv.valid = append(kv.valid, true)
+	//	}
+	//	kv.valid[insid] = true
 
-	kv.px.Start(insid, Op{args.Op, args.Key, args.Value})
+	kv.px.Start(insid, curProposal)
 
 	to := 10 * time.Millisecond
 	for {
-		status, _ := kv.px.Status(insid)
+		status, proposal := kv.px.Status(insid)
 		if status == paxos.Decided {
-			reply.Err = OK
-			//kv.MarkLog(Op{args.Op, args.Key, args.Value}, insid)
-			return nil
+			DPrintf("PutAppend seq-%d\tcurLog-%v\tstatusLop-%v\n", insid, kv.printop(curProposal), kv.printop(proposal.(Op)))
+			// check if it is exact the same propose
+			if proposal.(Op) == curProposal {
+				kv.interpretLog(insid)
+				reply.Err = OK
+				//kv.MarkLog(Op{"Get", args.Key, ""}, insid)
+				return nil
+			} else {
+				// wrong proposal
+				insid = kv.px.Max() + 1
+				DPrintf("PutAppend RPC %d: id-%d\tkey-%v\tvalue-%v\n", kv.me, insid, args.Key, ShrinkValue(args.Value))
+				kv.px.Start(insid, curProposal)
+				to = 10 * time.Millisecond
+			}
+
 		}
 		time.Sleep(to)
 		if to < 10*time.Second {
