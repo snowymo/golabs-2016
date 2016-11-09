@@ -43,7 +43,7 @@ import (
 type Fate int
 
 var DEBUG = false
-var TESTFOR = false
+var TESTFOR = true
 
 const (
 	Decided   Fate = iota + 1
@@ -322,15 +322,15 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 	if ok {
 
 		if TESTFOR {
-			px.debugPrintf("Status %d:\t%d\n", seq, agr.status)
+			//px.debugPrintf("Status %d:\t%d\n", seq, agr.status)
 		} else {
-			px.debugPrintf("Status %d:\t%v\t%v\n", seq, px.explainStatus(agr.status), agr.value)
+			//px.debugPrintf("Status %d:\t%v\t%v\n", seq, px.explainStatus(agr.status), agr.value)
 		}
 		//px.print()
 
 		return agr.status, agr.value
 	}
-	px.debugPrintf("Status %d:\tnot exist\n", seq)
+	//px.debugPrintf("Status %d:\tnot exist\n", seq)
 	return Pending, nil
 }
 
@@ -391,7 +391,7 @@ func (px *Paxos) prepareHelp(args *PrepareArgs, reply *PrepareReply) error {
 		//reply.Value = px.agreem[seq].value
 	}
 	//px.debugPrintf("Prepare RPC %d: cur high prop-%d\n", px.me, px.agreem[args.seq].highP)
-	px.debugPrintln("prepareHelp")
+	//px.debugPrintln("prepareHelp")
 	px.print()
 	return nil
 }
@@ -406,7 +406,7 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 func (px *Paxos) prepareNo(seq int) int {
 	// px.mu.Lock()
 	// defer px.mu.Unlock()
-	px.debugPrintf("prepareNo %d: seq-%d N-%d\n", px.me, seq, px.propWseq[seq]<<8|px.me)
+	//px.debugPrintf("prepareNo %d: seq-%d N-%d\n", px.me, seq, px.propWseq[seq]<<8|px.me)
 	return px.propWseq[seq]<<8 | px.me
 }
 
@@ -417,7 +417,7 @@ func (px *Paxos) preparePhase(seq int, value interface{}) int {
 	px.generateNo(seq)
 	_, ok := px.agreem[seq]
 	if !ok {
-		px.debugPrintf("Propose %d: NOT FOUND and clear\n", px.me, seq)
+		//px.debugPrintf("Propose %d: NOT FOUND and clear\n", px.me, seq)
 		px.agreem[seq] = &Agreement{value, Pending, -1, -1}
 
 		//		px.debugPrintf("preparePhase %d: not found in agreement\n", seq)
@@ -475,12 +475,12 @@ func (px *Paxos) preparePhase(seq int, value interface{}) int {
 			px.mu.Unlock()
 			ok := call(p, "Paxos.Prepare", args, &reply)
 			px.mu.Lock()
-			px.debugPrintf("reply:%v %d\n", reply.OK, reply.NHigh)
+			//px.debugPrintf("reply:%v %d\n", reply.OK, reply.NHigh)
 			if ok && reply.OK == OK {
 				prepareCnt++
 				if reply.NAccept > px.agreem[seq].highA {
 					px.agreem[seq].highA = reply.NAccept
-					px.debugPrintf("Prepare reply OK seq-%d update value-%v with value-%v\n", seq, px.agreem[seq].value, reply.Value)
+					//px.debugPrintf("Prepare reply OK seq-%d update value-%v with value-%v\n", seq, px.agreem[seq].value, reply.Value)
 					px.agreem[seq].value = reply.Value
 				}
 			} else if ok && reply.OK != OK {
@@ -504,7 +504,7 @@ func (px *Paxos) acceptHelp(args *AcceptArgs, reply *AcceptReply) error {
 		px.agreem[args.Seq] = &Agreement{"", Pending, args.N, -1}
 	}
 	if args.N >= px.agreem[args.Seq].highP {
-		px.debugPrintf("Accept RPC %d: seq-%d incoming is bigger %d >= %d\n", px.me, args.Seq, args.N, px.agreem[args.Seq].highP)
+		//px.debugPrintf("Accept RPC %d: seq-%d incoming is bigger %d >= %d\n", px.me, args.Seq, args.N, px.agreem[args.Seq].highP)
 		px.agreem[args.Seq].highP = args.N
 		px.agreem[args.Seq].highA = args.N
 		px.agreem[args.Seq].value = args.Value
@@ -514,8 +514,8 @@ func (px *Paxos) acceptHelp(args *AcceptArgs, reply *AcceptReply) error {
 		reply.OK = false
 		reply.NHigh = px.agreem[args.Seq].highP
 	}
-	px.debugPrintln("acceptHelp")
-	px.print()
+	//px.debugPrintln("acceptHelp")
+	//px.print()
 	return nil
 }
 
@@ -534,12 +534,12 @@ func (px *Paxos) acceptPhase(seq int, value interface{}) int {
 	if agr.value == "" {
 		px.agreem[seq].value = value
 		agr = px.agreem[seq]
-		px.debugPrintf("acceptPhase seq-%d nil before now-\t%v\n", seq, px.agreem[seq].value)
+		//px.debugPrintf("acceptPhase seq-%d nil before now-\t%v\n", seq, px.agreem[seq].value)
 	} else {
-		px.debugPrintf("acceptPhase seq-%d value-\t%v\n", seq, px.agreem[seq].value)
+		//px.debugPrintf("acceptPhase seq-%d value-\t%v\n", seq, px.agreem[seq].value)
 	}
 	if !ok {
-		px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
+		//px.debugPrintf("acceptPhase %d: not found in agreement\n", seq)
 		return 0
 	}
 	if agr.status != Pending {
@@ -593,7 +593,7 @@ func (px *Paxos) acceptPhase(seq int, value interface{}) int {
 }
 
 func (px *Paxos) decideHelp(args *DecideArgs, reply *DecideReply) error {
-	px.debugPrintf("Decide RPC %d: seq-%d\t%v\n", px.me, args.Seq, args.Value)
+	//px.debugPrintf("Decide RPC %d: seq-%d\t%v\n", px.me, args.Seq, args.Value)
 	//px.debugPrintf("Decide RPC %d: seq-%d\n", px.me, args.Seq)
 	_, ok := px.agreem[args.Seq]
 	if ok {
@@ -604,7 +604,7 @@ func (px *Paxos) decideHelp(args *DecideArgs, reply *DecideReply) error {
 	} else {
 		px.agreem[args.Seq] = &Agreement{args.Value, Decided, args.N, args.N}
 	}
-	px.debugPrintln("decideHelp")
+	//px.debugPrintln("decideHelp")
 	px.print()
 
 	reply.OK = true
@@ -624,7 +624,7 @@ func (px *Paxos) decidePhase(seq int) bool {
 
 	agr, ok := px.agreem[seq]
 	if !ok {
-		px.debugPrintf("decidePhase %d: not found in agreement\n", seq)
+		//px.debugPrintf("decidePhase %d: not found in agreement\n", seq)
 		// px.agreem[args.Seq] = &Agreement{"", Pending, args.N, -1}
 		return true
 	}
@@ -669,7 +669,7 @@ func (px *Paxos) generateNo(seq int) int {
 	//px.agreem[seq].highP = px.proposalNo
 	//px.debugPrintf("Propose ProposalNo\t%d\n", px.proposalNo)
 	px.propWseq[seq] = px.proposalNo
-	px.debugPrintf("generateNo %d: ProposalNo\t%d seq-%d N-%d\n", px.me, px.proposalNo, seq, px.propWseq[seq]<<8|px.me)
+	//px.debugPrintf("generateNo %d: ProposalNo\t%d seq-%d N-%d\n", px.me, px.proposalNo, seq, px.propWseq[seq]<<8|px.me)
 	return px.proposalNo
 }
 
@@ -689,7 +689,7 @@ func (px *Paxos) Propose(seq int, value interface{}) {
 		//px.agreem[seq].prono = px.proposalNo
 		//px.debugPrintf("Propose %d: seq-%d before prepare phase\n", px.me, seq)
 		//px.mu.Unlock()
-		px.debugPrintf("previous prepare cnt:%d accept cnt:%d seq-%d\n", prepareCnt, acceptCnt, seq)
+		//px.debugPrintf("previous prepare cnt:%d accept cnt:%d seq-%d\n", prepareCnt, acceptCnt, seq)
 
 		prepareCnt = px.preparePhase(seq, value)
 		// not pending
@@ -708,7 +708,7 @@ func (px *Paxos) Propose(seq int, value interface{}) {
 		if acceptCnt > len(px.peers)/2.0 {
 			// send decide to all
 			ok = px.decidePhase(seq)
-			px.debugPrintf("Propose: after decide phase continue-%t\n", ok)
+			//px.debugPrintf("Propose: after decide phase continue-%t\n", ok)
 		}
 		time.Sleep(time.Millisecond * 5 * time.Duration(px.me))
 
