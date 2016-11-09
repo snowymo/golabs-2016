@@ -77,7 +77,7 @@ func (ck *Clerk) Get(key string) string {
 	ok := false
 	for !ok || (reply.Err != OK) {
 		curSerId := int(nrand()) % len(ck.servers)
-		DPrintf("client Get to server: %d key-%v\n", curSerId, args.Key)
+		DPrintf("client Get to server: %v key-%v\n", ck.servers[curSerId], args.Key)
 		ok = call(ck.servers[curSerId], "KVPaxos.Get", args, &reply)
 	}
 	return reply.Value
@@ -97,7 +97,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ok := false
 	for !ok || (reply.Err != OK) {
 		curSerId := int(nrand()) % len(ck.servers)
-		DPrintf("client PutAppend to server: %d key-%v\tval-%v\n", curSerId, args.Key, ShrinkValue(args.Value))
+		DPrintf("client PutAppend to server: %v key-%v\tval-%v\n", ck.servers[curSerId], args.Key, ShrinkValue(args.Value))
 		ok = call(ck.servers[curSerId], "KVPaxos.PutAppend", args, &reply)
 	}
 }

@@ -646,18 +646,18 @@ func (px *Paxos) decidePhase(seq int) bool {
 	// px.mu.Lock()
 	// defer px.mu.Unlock()
 	// send accept rpc to other peers
-	px.mu.Unlock()
+
 	for i, p := range px.peers {
 		if i != px.me {
-
+			px.mu.Unlock()
 			call(p, "Paxos.Decide", args, &reply)
-
+			px.mu.Lock()
 			// if ok && reply.OK {
 			// 	acceptCnt++
 			// }
 		}
 	}
-	px.mu.Lock()
+
 	return false
 	//return acceptCnt
 }

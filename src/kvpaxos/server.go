@@ -17,7 +17,7 @@ import "time"
 // 	"math"
 // )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -63,59 +63,6 @@ type KVPaxos struct {
 	uidmap    map[int64]bool //uidmap = make(map[int64]bool)
 }
 
-func (kv *KVPaxos) interpretLog(insid int) {
-	var loglist []Op
-	loglist = make([]Op, 0)
-	_, curLog := kv.px.Status(insid)
-	to := 10 * time.Millisecond
-	// interpret the log before that point to make sure its key/value db reflects all recent put()s
-	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
-		DPrintf("interpretLog: call Status\t%d\n", pre_insid)
-		err := paxos.Pending
-		var pre_v interface{}
-		//err, pre_v := kv.px.Status(pre_insid)
-		for err != 1 {
-			err, pre_v = kv.px.Status(pre_insid)
-			time.Sleep(to)
-			if to < 10*time.Second {
-				to *= 2
-			}
-		}
-		//		DPrintf("interpretLog: call status\t%d\n", err)
-		// if find a log is put then break
-		if _, isop := pre_v.(Op); isop {
-			DPrintf("interpretLog: \t%d key-%v op-%v\n", pre_insid, pre_v.(Op).Key, pre_v.(Op).Oper)
-			loglist = append(loglist, pre_v.(Op))
-			if pre_v.(Op).Oper == "Put" && pre_v.(Op).Key == curLog.(Op).Key {
-				DPrintf("interpretLog:\t break size-%d key-%v\n", len(loglist), curLog.(Op).Key)
-				break
-			}
-		} else {
-			DPrintf("interpretLog: \t%d not op-%v\n", pre_insid, pre_v)
-		}
-
-	}
-	// figure out all the put/append from start to last same key put
-	DPrintf("interpretLog:\t size-%d key-%v\n", len(loglist), curLog.(Op).Key)
-	kv.db[curLog.(Op).Key] = ""
-	for logidx := len(loglist) - 1; logidx >= 0; logidx-- {
-		logentry := loglist[logidx]
-		DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
-		if logentry.Key == curLog.(Op).Key {
-			if logentry.Oper == "Put" {
-				kv.db[logentry.Key] = logentry.Value
-
-				DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
-			} else if logentry.Oper == "Append" {
-				kv.db[logentry.Key] += logentry.Value
-				DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
-			}
-		}
-
-	}
-	kv.printdb()
-}
-
 func (kv *KVPaxos) interpretLog2(insid int) {
 	_, curLog := kv.px.Status(insid)
 
@@ -125,22 +72,23 @@ func (kv *KVPaxos) interpretLog2(insid int) {
 	for pre_insid := len(kv.statusMap); pre_insid < insid; pre_insid++ {
 		DPrintf("interpretLog %d: call Status\t%d\n", kv.me, pre_insid)
 		err, pre_v := kv.px.Status(pre_insid)
-
+		// if it is old seq then we ask it to propose
+		kv.px.Start(pre_insid, pre_v)
 		for err != 1 {
-			err, pre_v = kv.px.Status(pre_insid)
 			time.Sleep(to)
 			if to < 10*time.Second {
 				to *= 2
 			}
+			err, pre_v = kv.px.Status(pre_insid)
 		}
 
 		if _, isop := pre_v.(Op); isop {
-			DPrintf("interpretLog: \t%d key-%v op-%v\n", pre_insid, pre_v.(Op).Key, pre_v.(Op).Oper)
+			DPrintf("interpretLog: \t%d op-%v\n", pre_insid, pre_v.(Op))
 			if kv.uidmap[pre_v.(Op).Uid] {
 				// already true, discard this entry
-				DPrintf("interpretLog: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
+				//DPrintf("interpretLog: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
 			} else {
-				DPrintf("interpretLog: \t%d notduplicate:%d\n", pre_insid, pre_v.(Op).Uid)
+				//DPrintf("interpretLog: \t%d notduplicate:%d\n", pre_insid, pre_v.(Op).Uid)
 				kv.statusMap = append(kv.statusMap, pre_v.(Op))
 				kv.uidmap[pre_v.(Op).Uid] = true
 			}
@@ -268,7 +216,7 @@ func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 				DPrintf("PutAppend seq-%d\tcurLog-%v\tstatusLop-%v\n", insid, kv.printop(curProposal), kv.printop(proposal.(Op)))
 				// check if it is exact the same propose
 				if proposal.(Op) == curProposal {
-					kv.interpretLog2(insid)
+					//kv.interpretLog2(insid)
 					reply.Err = OK
 					//kv.MarkLog(Op{"Get", args.Key, ""}, insid)
 					return nil
