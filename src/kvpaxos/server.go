@@ -12,12 +12,15 @@ import "syscall"
 import "encoding/gob"
 import "math/rand"
 import "time"
+import (
+	"sort"
+)
 
 // import (
 // 	"math"
 // )
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -28,10 +31,10 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 func (kv *KVPaxos) printdb() {
-	DPrintf("print db:\t%d\n", kv.me)
-	for key, value := range kv.db {
-		DPrintf("Key: %v Value: %v\n", key, ShrinkValue(value))
-	}
+	//	DPrintf("print db:\t%d\n", kv.me)
+	// for key, value := range kv.db {
+	// 	DPrintf("Key: %v Value: %v\n", key, ShrinkValue(value))
+	// }
 	for i, value := range kv.statusMap {
 		DPrintf("i: %d\t%v\n", i, kv.printop(value))
 	}
@@ -61,20 +64,19 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
-	db        map[string]string
-	statusMap []Op           // statusMap = make([]Op, 0)
-	uidmap    map[int64]bool //uidmap = make(map[int64]bool)
-	validList map[int]bool   // validList = make([]bool, 0)
-	minDone   int
+	db            map[string]string
+	statusMap     map[int]Op    // statusMap = make(map[int]Op)
+	uidmap        map[int64]int //uidmap = make(map[int64]bool)
+	validList     map[int]bool  // validList = make([]bool, 0)
+	minDone       int
+	lastStatusIdx int
 }
 
-func (kv *KVPaxos) interpretLog2(insid int) {
-	_, curLog := kv.px.Status(insid)
-
+func (kv *KVPaxos) interpretLog2(insid int, curLog interface{}) string {
 	to := 10 * time.Millisecond
 
 	// step 1: remove seq with duplicate ids
-	for pre_insid := len(kv.statusMap); pre_insid < insid; pre_insid++ {
+	for pre_insid := kv.lastStatusIdx + 1; pre_insid <= insid; pre_insid++ {
 		//DPrintf("interpretLog %d: call Status\t%d\n", kv.me, pre_insid)
 		err, pre_v := kv.px.Status(pre_insid)
 		// if it is old seq then we ask it to propose
@@ -89,13 +91,16 @@ func (kv *KVPaxos) interpretLog2(insid int) {
 
 		if _, isop := pre_v.(Op); isop {
 			//DPrintf("interpretLog: \t%d op-%v\n", pre_insid, kv.printop(pre_v.(Op)))
-			if kv.uidmap[pre_v.(Op).Uid] {
+			if _, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok {
 				// already true, discard this entry
-				//DPrintf("interpretLog: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
+				DPrintf("interpretLog: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
 			} else {
-				//DPrintf("interpretLog: \t%d notduplicate:%d\n", pre_insid, pre_v.(Op).Uid)
-				kv.statusMap = append(kv.statusMap, pre_v.(Op))
-				kv.uidmap[pre_v.(Op).Uid] = true
+				DPrintf("interpretLog: \t%d notdup:%d\n", pre_insid, pre_v.(Op).Uid)
+				//kv.statusMap = append(kv.statusMap, pre_v.(Op))
+				kv.statusMap[pre_insid] = pre_v.(Op)
+				kv.lastStatusIdx = pre_insid
+				kv.printdb()
+				kv.uidmap[pre_v.(Op).Uid] = pre_insid
 				kv.validList[pre_insid] = true
 			}
 		} else {
@@ -103,35 +108,41 @@ func (kv *KVPaxos) interpretLog2(insid int) {
 		}
 	}
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
-	startIdx := 0
-	for logidx := len(kv.statusMap) - 1; logidx >= 0; logidx-- {
-		// if find a log is put then break
-		//DPrintf("interpretLog: \tkey-%v op-%v\n", kv.statusMap[logidx].Key, kv.statusMap[logidx].Oper)
-		if kv.statusMap[logidx].Oper == "Put" && kv.statusMap[logidx].Key == curLog.(Op).Key {
-			startIdx = logidx
-			//DPrintf("interpretLog:\t start idx-%d key-%v\n", startIdx, curLog.(Op).Key)
-			break
-		}
-
-	}
-	// step 3: figure out all the put/append from start to last same key put
-	//DPrintf("interpretLog:\t start idx-%d key-%v\n", startIdx, curLog.(Op).Key)
-	kv.db[curLog.(Op).Key] = ""
-	for logidx := startIdx; logidx < len(kv.statusMap); logidx++ {
-		logentry := kv.statusMap[logidx]
-		//DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
-		if logentry.Key == curLog.(Op).Key {
-			if logentry.Oper == "Put" {
-				kv.db[logentry.Key] = logentry.Value
-				//DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
-			} else if logentry.Oper == "Append" {
-				kv.db[logentry.Key] += logentry.Value
-				//DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+	// if it is duplicate, then get the value directly
+	if dupSeqid := kv.uidmap[curLog.(Op).Uid]; dupSeqid != insid {
+		return kv.statusMap[dupSeqid].Value
+	} else {
+		startIdx := 0
+		for logidx := kv.lastStatusIdx; logidx >= 0; logidx-- {
+			// if find a log is put then break
+			if kv.statusMap[logidx].Oper == "Put" && kv.statusMap[logidx].Key == curLog.(Op).Key {
+				startIdx = logidx
+				break
 			}
 		}
+		// step 3: figure out all the put/append from start to last same key put
+		DPrintf("before access kv.statusMap[%d].Value\n", insid)
+		kv.printdb()
+		//kv.statusMap[insid].Value = ""
+		updatedOp := kv.statusMap[insid]
+		for logidx := startIdx; logidx < kv.lastStatusIdx; logidx++ {
+			logentry, logok := kv.statusMap[logidx]
+			//DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
+			if logok && logentry.Key == curLog.(Op).Key {
+				if logentry.Oper == "Put" {
+					updatedOp.Value = logentry.Value
+					//DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+				} else if logentry.Oper == "Append" {
+					updatedOp.Value += logentry.Value
+					//DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+				}
+			}
 
+		}
+		kv.statusMap[insid] = updatedOp
+		kv.printdb()
+		return updatedOp.Value
 	}
-	kv.printdb()
 }
 
 // func (kv *KVPaxos) MarkLog(oper Op, insid int) {
@@ -198,17 +209,36 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 	keyop[curPair] = true
 
 	// set all previous op with same key and op to false
-	for pre_insid := insid - 1; pre_insid > kv.minDone && pre_insid < len(kv.statusMap); pre_insid-- {
-		DPrintf("CheckMinDone check idx:%d\n", pre_insid)
-		curPair = KeyOpPair{kv.statusMap[pre_insid].Key, kv.turnAppendtoPut(kv.statusMap[pre_insid].Oper)}
-		DPrintf("CheckMinDone curpair:%v\n", curPair)
-		if b, ok2 := keyop[curPair]; ok2 && b {
-			kv.validList[pre_insid] = false
-			DPrintf("turn to false: seq-%d %t\n", pre_insid, kv.validList[pre_insid])
-		} else {
-			keyop[curPair] = true
+	var keyInsids []int
+	for keyInsid, _ := range kv.statusMap {
+		keyInsids = append(keyInsids, keyInsid)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(keyInsids)))
+	for _, keyInsid := range keyInsids {
+		if keyInsid > kv.minDone {
+			DPrintf("CheckMinDone check key:%d\n", keyInsid)
+			curPair = KeyOpPair{kv.statusMap[keyInsid].Key, kv.turnAppendtoPut(kv.statusMap[keyInsid].Oper)}
+			DPrintf("CheckMinDone curpair:%v\n", curPair)
+			if b, ok2 := keyop[curPair]; ok2 && b {
+				kv.validList[keyInsid] = false
+				DPrintf("turn to false: seq-%d %t\n", keyInsid, kv.validList[keyInsid])
+			} else {
+				keyop[curPair] = true
+			}
 		}
 	}
+
+	// for pre_insid := insid - 1; pre_insid > kv.minDone && pre_insid < len(kv.statusMap); pre_insid-- {
+	// 	DPrintf("CheckMinDone check idx:%d\n", pre_insid)
+	// 	curPair = KeyOpPair{kv.statusMap[pre_insid].Key, kv.turnAppendtoPut(kv.statusMap[pre_insid].Oper)}
+	// 	DPrintf("CheckMinDone curpair:%v\n", curPair)
+	// 	if b, ok2 := keyop[curPair]; ok2 && b {
+	// 		kv.validList[pre_insid] = false
+	// 		DPrintf("turn to false: seq-%d %t\n", pre_insid, kv.validList[pre_insid])
+	// 	} else {
+	// 		keyop[curPair] = true
+	// 	}
+	// }
 	// Find the smallest true
 	myMinValid := len(kv.validList)
 	for k, v := range kv.validList {
@@ -242,7 +272,9 @@ func (kv *KVPaxos) freeMem() {
 	// free own attribute about statusMap
 	for i, _ := range kv.statusMap {
 		if i <= kv.minDone {
-			kv.statusMap[i].Value = ""
+			curOp := kv.statusMap[i]
+			curOp.Value = ""
+			kv.statusMap[i] = curOp
 		}
 	}
 	kv.printdb()
@@ -267,9 +299,8 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 				//DPrintf("Get seq-%d\tcurLog-%v\tstatusLop-%v\n", insid, kv.printop(curProposal), kv.printop(proposal.(Op)))
 				// check if it is exact the same propose
 				if proposal.(Op) == curProposal {
-					kv.interpretLog2(insid)
+					reply.Value = kv.interpretLog2(insid, proposal)
 					reply.Err = OK
-					reply.Value = kv.db[args.Key]
 					kv.CheckMinDone(insid, curProposal)
 					//kv.mu.Unlock()
 					kv.freeMem()
@@ -386,11 +417,12 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
-	kv.db = make(map[string]string)
-	kv.statusMap = make([]Op, 0)
-	kv.uidmap = make(map[int64]bool)
+	//kv.db = make(map[string]string)
+	kv.statusMap = make(map[int]Op, 0)
+	kv.uidmap = make(map[int64]int)
 	kv.validList = make(map[int]bool, 0)
 	kv.minDone = -1
+	kv.lastStatusIdx = -1
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)

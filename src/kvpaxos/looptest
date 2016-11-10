@@ -1,4 +1,7 @@
 for i in {1..100}
 do
-go test > output_$i.txt
+	echo "ongoing TestUnreliable $i"
+	go test -race -run TestUnreliable > output_Url$i.txt
+	echo "ongoing TestManyPartition $i"
+	go test -race -run TestManyPartition > output_mpart$i.txt
 done
