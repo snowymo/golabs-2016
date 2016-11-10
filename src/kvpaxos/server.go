@@ -209,9 +209,13 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 	// add itself
 	//kv.validList[insid] = true
 	//kv.printValid()
+	if curProposal.Oper == "Append" {
+		return
+	}
+
 	keyop := make(map[KeyOpPair]bool)
 
-	curPair := KeyOpPair{curProposal.Key, kv.turnAppendtoPut(curProposal.Oper)}
+	curPair := KeyOpPair{curProposal.Key, curProposal.Oper}
 	//DPrintf("CheckMinDone curpair:%v\n", curPair)
 	keyop[curPair] = true
 
@@ -229,7 +233,7 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 			if b, ok2 := keyop[curPair]; ok2 && b {
 				kv.validList[keyInsid] = false
 				//DPrintf("turn to false: seq-%d %t\n", keyInsid, kv.validList[keyInsid])
-			} else {
+			} else if !ok2 {
 				keyop[curPair] = true
 			}
 		}
