@@ -109,40 +109,47 @@ func (kv *KVPaxos) interpretLog2(insid int, curLog interface{}) string {
 	}
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
 	// if it is duplicate, then get the value directly
+	checkLastPut := insid
 	if dupSeqid := kv.uidmap[curLog.(Op).Uid]; dupSeqid != insid {
-		return kv.statusMap[dupSeqid].Value
-	} else {
-		startIdx := 0
-		for logidx := kv.lastStatusIdx; logidx >= 0; logidx-- {
-			// if find a log is put then break
-			if kv.statusMap[logidx].Oper == "Put" && kv.statusMap[logidx].Key == curLog.(Op).Key {
-				startIdx = logidx
-				break
-			}
+		if kv.statusMap[dupSeqid].Value == "" {
+			checkLastPut = dupSeqid
+		} else {
+			return kv.statusMap[dupSeqid].Value
 		}
-		// step 3: figure out all the put/append from start to last same key put
-		DPrintf("before access kv.statusMap[%d].Value\n", insid)
-		kv.printdb()
-		//kv.statusMap[insid].Value = ""
-		updatedOp := kv.statusMap[insid]
-		for logidx := startIdx; logidx < kv.lastStatusIdx; logidx++ {
-			logentry, logok := kv.statusMap[logidx]
-			//DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
-			if logok && logentry.Key == curLog.(Op).Key {
-				if logentry.Oper == "Put" {
-					updatedOp.Value = logentry.Value
-					//DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
-				} else if logentry.Oper == "Append" {
-					updatedOp.Value += logentry.Value
-					//DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
-				}
-			}
-
-		}
-		kv.statusMap[insid] = updatedOp
-		kv.printdb()
-		return updatedOp.Value
 	}
+	// if it is not duplicate, or did not get older Get before
+	startIdx := 0
+	for logidx := checkLastPut; logidx >= 0; logidx-- {
+		// if find a log is put then break
+		if kv.statusMap[logidx].Oper == "Put" && kv.statusMap[logidx].Key == curLog.(Op).Key {
+			startIdx = logidx
+			break
+		}
+	}
+	// step 3: figure out all the put/append from start to last same key put
+	DPrintf("before access kv.statusMap[%d].Value\n", insid)
+	kv.printdb()
+	//kv.statusMap[insid].Value = ""
+	updatedOp := kv.statusMap[insid]
+	updatedOp.Value = ""
+	for logidx := startIdx; logidx < checkLastPut; logidx++ {
+		logentry, logok := kv.statusMap[logidx]
+		//DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
+		if logok && logentry.Key == curLog.(Op).Key {
+			if logentry.Oper == "Put" {
+				updatedOp.Value = logentry.Value
+				//DPrintf("interpretLog: put k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+			} else if logentry.Oper == "Append" {
+				updatedOp.Value += logentry.Value
+				//DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, ShrinkValue(logentry.Value), ShrinkValue(kv.db[logentry.Key]))
+			}
+		}
+
+	}
+	kv.statusMap[insid] = updatedOp
+	kv.printdb()
+	return updatedOp.Value
+
 }
 
 // func (kv *KVPaxos) MarkLog(oper Op, insid int) {
@@ -198,14 +205,14 @@ func (kv *KVPaxos) turnAppendtoPut(op string) string {
 }
 
 func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
-	DPrintf("CheckMinDone seq:%d\t%v\n", insid, kv.printop(curProposal))
+	//DPrintf("CheckMinDone seq:%d\t%v\n", insid, kv.printop(curProposal))
 	// add itself
 	//kv.validList[insid] = true
-	kv.printValid()
+	//kv.printValid()
 	keyop := make(map[KeyOpPair]bool)
 
 	curPair := KeyOpPair{curProposal.Key, kv.turnAppendtoPut(curProposal.Oper)}
-	DPrintf("CheckMinDone curpair:%v\n", curPair)
+	//DPrintf("CheckMinDone curpair:%v\n", curPair)
 	keyop[curPair] = true
 
 	// set all previous op with same key and op to false
@@ -216,12 +223,12 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 	sort.Sort(sort.Reverse(sort.IntSlice(keyInsids)))
 	for _, keyInsid := range keyInsids {
 		if keyInsid > kv.minDone {
-			DPrintf("CheckMinDone check key:%d\n", keyInsid)
+			//DPrintf("CheckMinDone check key:%d\n", keyInsid)
 			curPair = KeyOpPair{kv.statusMap[keyInsid].Key, kv.turnAppendtoPut(kv.statusMap[keyInsid].Oper)}
-			DPrintf("CheckMinDone curpair:%v\n", curPair)
+			//DPrintf("CheckMinDone curpair:%v\n", curPair)
 			if b, ok2 := keyop[curPair]; ok2 && b {
 				kv.validList[keyInsid] = false
-				DPrintf("turn to false: seq-%d %t\n", keyInsid, kv.validList[keyInsid])
+				//DPrintf("turn to false: seq-%d %t\n", keyInsid, kv.validList[keyInsid])
 			} else {
 				keyop[curPair] = true
 			}
@@ -245,7 +252,7 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 		if v {
 			if myMinValid > k {
 				myMinValid = k
-				DPrintf("smallest true:%d\n", myMinValid)
+				//DPrintf("smallest true:%d\n", myMinValid)
 			}
 		}
 	}
@@ -255,13 +262,13 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 		if !v {
 			if k > myMaxUValid && k < myMinValid {
 				myMaxUValid = k
-				DPrintf("biggest false:%d\n", myMaxUValid)
+				//DPrintf("biggest false:%d\n", myMaxUValid)
 			}
 		}
 	}
 	if kv.minDone < myMaxUValid {
 		kv.minDone = myMaxUValid
-		DPrintf("update minDone:%d\n", kv.minDone)
+		//DPrintf("update minDone:%d\n", kv.minDone)
 	}
 	DPrintf("me: %d\tCheckMinDone before call Done:%d\n", kv.me, kv.minDone)
 	kv.px.Done(kv.minDone)
@@ -277,7 +284,7 @@ func (kv *KVPaxos) freeMem() {
 			kv.statusMap[i] = curOp
 		}
 	}
-	kv.printdb()
+	//kv.printdb()
 }
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
