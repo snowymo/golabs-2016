@@ -43,7 +43,7 @@ import "time"
 // or it was agreed but forgotten (i.e. < Min()).
 type Fate int
 
-var DEBUG = true
+var DEBUG = false
 var TESTFOR = false
 
 const (
