@@ -226,15 +226,17 @@ func (kv *KVPaxos) CheckMinDone(insid int, curProposal Op) {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(keyInsids)))
 	for _, keyInsid := range keyInsids {
-		if keyInsid > kv.minDone {
+		if keyInsid > kv.minDone && keyInsid < insid {
+
 			//DPrintf("CheckMinDone check key:%d\n", keyInsid)
 			curPair = KeyOpPair{kv.statusMap[keyInsid].Key, kv.turnAppendtoPut(kv.statusMap[keyInsid].Oper)}
+			curPairOri := KeyOpPair{kv.statusMap[keyInsid].Key, kv.statusMap[keyInsid].Oper}
 			//DPrintf("CheckMinDone curpair:%v\n", curPair)
 			if b, ok2 := keyop[curPair]; ok2 && b {
 				kv.validList[keyInsid] = false
 				//DPrintf("turn to false: seq-%d %t\n", keyInsid, kv.validList[keyInsid])
-			} else if !ok2 {
-				keyop[curPair] = true
+			} else if b, ok2 = keyop[curPairOri]; !ok2 {
+				keyop[curPairOri] = true
 			}
 		}
 	}
@@ -283,9 +285,11 @@ func (kv *KVPaxos) freeMem() {
 	// free own attribute about statusMap
 	for i, _ := range kv.statusMap {
 		if i <= kv.minDone {
-			curOp := kv.statusMap[i]
-			curOp.Value = ""
-			kv.statusMap[i] = curOp
+			if kv.statusMap[i].Oper != "Get" {
+				curOp := kv.statusMap[i]
+				curOp.Value = ""
+				kv.statusMap[i] = curOp
+			}
 		}
 	}
 	//kv.printdb()

@@ -215,8 +215,8 @@ func (px *Paxos) Max() int {
 	px.mu.Lock()
 	defer px.mu.Unlock()
 	maxseq := -1
-	for k, _ := range px.agreem {
-		if k > maxseq {
+	for k, agr := range px.agreem {
+		if k > maxseq && agr.status == Decided {
 			maxseq = k
 		}
 	}

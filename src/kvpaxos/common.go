@@ -42,7 +42,7 @@ func ShrinkValue(value interface{}) interface{} {
 		}
 		return v[0:lenth]
 	} else {
-		return value
+		return value.(int)
 	}
 
 }
