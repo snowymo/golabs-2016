@@ -54,3 +54,11 @@ type GetDoneArgs struct {
 type GetDoneReply struct {
 	DoneSeq int
 }
+
+// func ShrinkValue(value string) string {
+// 	lenth := len(value)
+// 	if lenth > 5 {
+// 		lenth = 5
+// 	}
+// 	return value[0:lenth]
+// }

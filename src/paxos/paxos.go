@@ -32,9 +32,10 @@ import "fmt"
 import "math/rand"
 
 import "time"
-import (
-	"reflect"
-)
+
+// import (
+// 	"reflect"
+// )
 
 // px.Status() return values, indicating
 // whether an agreement has been decided,
@@ -42,8 +43,8 @@ import (
 // or it was agreed but forgotten (i.e. < Min()).
 type Fate int
 
-var DEBUG = false
-var TESTFOR = true
+var DEBUG = true
+var TESTFOR = false
 
 const (
 	Decided   Fate = iota + 1
@@ -91,7 +92,7 @@ func (px *Paxos) print() {
 
 			if TESTFOR {
 				//value = ""
-				fmt.Printf("me:%d\tdecision:\tseq-%d: vsize-%d sta-%d\thighp-%d\thighA-%d\n", px.me, k, reflect.TypeOf(v.value).Size(), v.status, v.highP, v.highA)
+				fmt.Printf("me:%d\tdecision:\tseq-%d: vsize-%d sta-%d\thighp-%d\thighA-%d\n", px.me, k, v.value, v.status, v.highP, v.highA)
 			} else {
 				fmt.Printf("me:%d\tdecision:\tseq-%d: v-%v\tsta-%d\thighp-%d\thighA-%d\n", px.me, k, v.value, v.status, v.highP, v.highA)
 			}
@@ -214,8 +215,8 @@ func (px *Paxos) Max() int {
 	px.mu.Lock()
 	defer px.mu.Unlock()
 	maxseq := -1
-	for k, _ := range px.agreem {
-		if k > maxseq {
+	for k, agr := range px.agreem {
+		if k > maxseq && agr.status == Decided {
 			maxseq = k
 		}
 	}

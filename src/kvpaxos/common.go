@@ -34,12 +34,17 @@ type GetReply struct {
 	Value string
 }
 
-func ShrinkValue(value string) string {
-	lenth := len(value)
-	if lenth > 5 {
-		lenth = 5
+func ShrinkValue(value interface{}) interface{} {
+	if v, ok := value.(string); ok {
+		lenth := len(v)
+		if lenth > 5 {
+			lenth = 5
+		}
+		return v[0:lenth]
+	} else {
+		return value.(int)
 	}
-	return value[0:lenth]
+
 }
 
 const MAXUID = 4294967296
