@@ -12,6 +12,9 @@ import "os"
 import "syscall"
 import "encoding/gob"
 import "math/rand"
+import (
+	"time"
+)
 
 type ShardMaster struct {
 	mu         sync.Mutex
@@ -24,32 +27,249 @@ type ShardMaster struct {
 	configs []Config // indexed by config num
 }
 
-
 type Op struct {
 	// Your data here.
+	Oper string // put get app leave join move query
+	// Key      string   // for put/get/app
+	// Value    string   // for put/get/app
+	GID      int64    // for put/get/app Merge with GID     int64    // for shard unique replica group ID
+	Servers  []string // for shard  group server ports
+	ShardNum int      // for shard Move Merge with Num		int      // for shard Query desired config number
 }
 
+type rpcFunc func(Op, int, *QueryReply)
+
+const Debug = 1
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		// log.Printf(format, a...)
+		fmt.Printf(format, a...)
+	}
+	return
+}
+
+func (sm *ShardMaster) printConfig(format string, i int) {
+	DPrintf(format)
+	DPrintf("config %d Num-%d Shards-%v\n", i, sm.configs[i].Num, sm.configs[i].Shards)
+	DPrintf("\n")
+	// Num    int                // config number
+	// Shards [NShards]int64     // shard -> gid
+	//Groups map[int64][]string // gid -> servers[]
+}
+
+func (sm *ShardMaster) printConfigs(format string) {
+	DPrintf(format)
+	DPrintf("sm: %d configs\n", sm.me)
+	for i, _ := range sm.configs {
+		DPrintf("config %d Num-%d Shards-%v\n", i, sm.configs[i].Num, sm.configs[i].Shards)
+	}
+	DPrintf("\n")
+	// Num    int                // config number
+	// Shards [NShards]int64     // shard -> gid
+	//Groups map[int64][]string // gid -> servers[]
+}
+
+func (sm *ShardMaster) rpcRoutine(curProposal Op, insid int, reply *QueryReply, afterProp rpcFunc) {
+	DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+
+	sm.px.Start(insid, curProposal)
+
+	to := 10 * time.Millisecond
+	for {
+		status, proposal := sm.px.Status(insid)
+		if status == paxos.Decided {
+			if _, isop := proposal.(Op); isop {
+				// check if it is exact the same propose
+				if (proposal.(Op).GID == curProposal.GID) && (proposal.(Op).Oper == curProposal.Oper) && (proposal.(Op).ShardNum == curProposal.ShardNum) {
+					// kv.CheckMinDone(insid, curProposal)
+					// kv.freeMem()
+					afterProp(curProposal, insid, reply)
+					return
+				} else {
+					// wrong proposal
+					insid = sm.px.Max() + 1
+					DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+					sm.px.Start(insid, curProposal)
+					to = 10 * time.Millisecond
+				}
+			} else {
+				DPrintf("%v RPC me:%d id-%d\tGID-%d\tWrong op type\n", curProposal.Oper, sm.me, insid, curProposal.GID)
+			}
+		}
+		time.Sleep(to)
+		if to < 10*time.Second {
+			to *= 2
+		}
+	}
+}
+
+func (sm *ShardMaster) organizeShards(GID int64, prevGrp *[NShards]int64, oper string) {
+	if oper == "Join" {
+		// simplest way, get half from the most
+		agg := map[int64]int{}
+		maxGroupCnt := 0
+		maxGroupId := int64(-1)
+		for _, v := range prevGrp {
+			if v == GID {
+				// if GID already exist then skip
+				return
+			}
+			agg[v]++
+			if agg[v] > maxGroupCnt {
+				maxGroupCnt = agg[v]
+				maxGroupId = v
+			}
+		}
+		// cut half
+		curCnt := 0
+		for i, v := range prevGrp {
+			if v == 0 {
+				prevGrp[i] = GID
+			} else if v == maxGroupId {
+				curCnt++
+				if curCnt > maxGroupCnt/2 {
+					prevGrp[i] = GID
+				}
+			}
+
+		}
+		//DPrintf("in organize %v\n", prevGrp)
+	} else if oper == "Leave" {
+		// record all new empty shard index
+		tba := []int{}
+		for i, v := range prevGrp {
+			if v == GID {
+				tba = append(tba, i)
+			}
+		}
+		//DPrintf("in Leave tba:%v\n", tba)
+		for _, s := range tba {
+			// find min and assign assign one empty
+			agg := map[int64]int{}
+			minGroupCnt := NShards
+			minGroupId := int64(-1)
+			for _, g := range prevGrp {
+				if g != GID {
+					agg[g]++
+				}
+			}
+			//DPrintf("in Leave agg:%v\n", agg)
+			for k, v := range agg {
+				if minGroupCnt > v {
+					minGroupCnt = v
+					minGroupId = k
+				}
+			}
+			prevGrp[s] = minGroupId
+			//DPrintf("in Leave change %d %v\n", s, prevGrp)
+		}
+	}
+
+}
+
+func copyMap(dstMap map[int64][]string, srcMap map[int64][]string) {
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
+}
+
+func (sm *ShardMaster) joinRpc(curProposal Op, insid int, reply *QueryReply) {
+	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
+
+	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+	newconfig.Groups[curProposal.GID] = curProposal.Servers
+	sm.printConfig("before organize\n", len(sm.configs)-1)
+	sm.organizeShards(curProposal.GID, &newconfig.Shards, curProposal.Oper)
+	sm.configs = append(sm.configs, newconfig)
+	sm.printConfig("after organize\n", len(sm.configs)-1)
+
+}
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	// Your code here.
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
+	curProposal := Op{"Join", args.GID, args.Servers, -1}
+	insid := sm.px.Max() + 1
+
+	sm.rpcRoutine(curProposal, insid, nil, sm.joinRpc)
 	return nil
+}
+
+func (sm *ShardMaster) leaveRpc(curProposal Op, insid int, reply *QueryReply) {
+	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
+
+	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+	delete(newconfig.Groups, curProposal.GID)
+
+	sm.printConfig("before organize\n", len(sm.configs)-1)
+	sm.organizeShards(curProposal.GID, &newconfig.Shards, curProposal.Oper)
+	sm.configs = append(sm.configs, newconfig)
+	sm.printConfig("after organize\n", len(sm.configs)-1)
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	// Your code here.
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	curProposal := Op{"Leave", args.GID, nil, -1}
+	insid := sm.px.Max() + 1
+
+	sm.rpcRoutine(curProposal, insid, nil, sm.leaveRpc)
 
 	return nil
+}
+
+func (sm *ShardMaster) moveRpc(curProposal Op, insid int, reply *QueryReply) {
+	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
+	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+
+	sm.printConfigs("before moving\n")
+
+	newconfig.Shards[curProposal.ShardNum] = curProposal.GID
+	sm.configs = append(sm.configs, newconfig)
+
+	sm.printConfigs("after moving\n")
+
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	// Your code here.
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	curProposal := Op{"Move", args.GID, nil, args.Shard}
+	insid := sm.px.Max() + 1
+
+	sm.rpcRoutine(curProposal, insid, nil, sm.moveRpc)
 
 	return nil
 }
 
+func (sm *ShardMaster) queryRpc(curProposal Op, insid int, reply *QueryReply) {
+	// reply should assigned to some configuration
+	//DPrintf("query %d config size:%d\n", curProposal.ShardNum, len(sm.configs))
+	if (curProposal.ShardNum == -1) || (curProposal.ShardNum > len(sm.configs)) {
+		reply.Config = sm.configs[len(sm.configs)-1]
+	} else {
+		reply.Config = sm.configs[curProposal.ShardNum]
+	}
+
+}
+
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	// Your code here.
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	curProposal := Op{"Query", -1, nil, args.Num}
+	//DPrintf("Query proposal with num %d %v\n", args.Num, curProposal)
+	insid := sm.px.Max() + 1
+
+	sm.rpcRoutine(curProposal, insid, reply, sm.queryRpc)
 
 	return nil
 }
