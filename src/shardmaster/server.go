@@ -24,7 +24,8 @@ type ShardMaster struct {
 	unreliable int32 // for testing
 	px         *paxos.Paxos
 
-	configs []Config // indexed by config num
+	configs    []Config // indexed by config num
+	lastLogIdx int
 }
 
 type Op struct {
@@ -104,64 +105,105 @@ func (sm *ShardMaster) rpcRoutine(curProposal Op, insid int, reply *QueryReply, 
 	}
 }
 
-func (sm *ShardMaster) organizeShards(GID int64, prevGrp *[NShards]int64, oper string) {
+func (sm *ShardMaster) organizeShards(GID int64, prevCfg *Config, oper string) {
 	if oper == "Join" {
-		// simplest way, get half from the most
+		// do the reverse way for leave
+		// find the max count of group, split one to GID, stop when delta between max count and GID count is 1
 		agg := map[int64]int{}
 		maxGroupCnt := 0
 		maxGroupId := int64(-1)
-		for _, v := range prevGrp {
-			if v == GID {
+		for _, g := range prevCfg.Shards {
+			if g == GID {
 				// if GID already exist then skip
 				return
 			}
-			agg[v]++
-			if agg[v] > maxGroupCnt {
-				maxGroupCnt = agg[v]
-				maxGroupId = v
-			}
+			agg[g]++
 		}
-		// cut half
-		curCnt := 0
-		for i, v := range prevGrp {
-			if v == 0 {
-				prevGrp[i] = GID
-			} else if v == maxGroupId {
-				curCnt++
-				if curCnt > maxGroupCnt/2 {
-					prevGrp[i] = GID
+		for {
+			// find min and assign assign one empty
+			maxGroupCnt = 0
+			maxGroupId = int64(-1)
+
+			for k, v := range agg {
+				if maxGroupCnt < v {
+					maxGroupCnt = v
+					maxGroupId = k
 				}
 			}
-
+			DPrintf("in Join agg:%v maxGroupCnt:%d maxGroupId:%d agg[%d]:%d\n", agg, maxGroupCnt, maxGroupId, GID, agg[GID])
+			if agg[GID] >= (maxGroupCnt - 1) {
+				break
+			}
+			for i, g := range prevCfg.Shards {
+				if g <= 0 {
+					prevCfg.Shards[i] = GID
+					agg[GID]++
+					agg[g]--
+				} else if g == maxGroupId {
+					prevCfg.Shards[i] = GID
+					agg[g]--
+					agg[GID]++
+					break
+				}
+			}
 		}
+		// agg := map[int64]int{}
+		// maxGroupCnt := 0
+		// maxGroupId := int64(-1)
+		// for _, v := range prevGrp {
+		// 	if v == GID {
+		// 		// if GID already exist then skip
+		// 		return
+		// 	}
+		// 	agg[v]++
+		// 	if agg[v] > maxGroupCnt {
+		// 		maxGroupCnt = agg[v]
+		// 		maxGroupId = v
+		// 	}
+		// }
+
+		// // cut half
+		// curCnt := 0
+		// for i, v := range prevGrp {
+		// 	if v == 0 {
+		// 		prevGrp[i] = GID
+		// 	} else if v == maxGroupId {
+		// 		curCnt++
+		// 		if curCnt > maxGroupCnt/2 {
+		// 			prevGrp[i] = GID
+		// 		}
+		// 	}
+
+		// }
 		//DPrintf("in organize %v\n", prevGrp)
 	} else if oper == "Leave" {
 		// record all new empty shard index
 		tba := []int{}
-		for i, v := range prevGrp {
+		for i, v := range prevCfg.Shards {
 			if v == GID {
 				tba = append(tba, i)
 			}
 		}
 		//DPrintf("in Leave tba:%v\n", tba)
+		agg := map[int64]int{}
+		for _, g := range prevCfg.Shards {
+			if g != GID {
+				agg[g]++
+			}
+		}
 		for _, s := range tba {
 			// find min and assign assign one empty
-			agg := map[int64]int{}
-			minGroupCnt := NShards
+			minGroupCnt := NShards * NShards
 			minGroupId := int64(-1)
-			for _, g := range prevGrp {
-				if g != GID {
-					agg[g]++
-				}
-			}
 			//DPrintf("in Leave agg:%v\n", agg)
-			for k, v := range agg {
-				if minGroupCnt > v {
-					minGroupCnt = v
+			for k, _ := range prevCfg.Groups {
+				if minGroupCnt > agg[k] {
+					minGroupCnt = agg[k]
 					minGroupId = k
 				}
 			}
-			prevGrp[s] = minGroupId
+			prevCfg.Shards[s] = minGroupId
+			agg[minGroupId]++
 			//DPrintf("in Leave change %d %v\n", s, prevGrp)
 		}
 	}
@@ -174,15 +216,21 @@ func copyMap(dstMap map[int64][]string, srcMap map[int64][]string) {
 	}
 }
 
-func (sm *ShardMaster) joinRpc(curProposal Op, insid int, reply *QueryReply) {
+func (sm *ShardMaster) joinRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
 
 	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 	newconfig.Groups[curProposal.GID] = curProposal.Servers
-	sm.printConfig("before organize\n", len(sm.configs)-1)
-	sm.organizeShards(curProposal.GID, &newconfig.Shards, curProposal.Oper)
+	//sm.printConfigs("before organize\n")
+	sm.printConfig("before joinRpc organize\n", len(sm.configs)-1)
+	sm.organizeShards(curProposal.GID, &newconfig, curProposal.Oper)
 	sm.configs = append(sm.configs, newconfig)
-	sm.printConfig("after organize\n", len(sm.configs)-1)
+	//sm.printConfigs("after joinRpc organize\n")
+	sm.printConfig("after joinRpc organize\n", len(sm.configs)-1)
+
+}
+
+func (sm *ShardMaster) emptyRpc(curProposal Op, insid int, reply *QueryReply) {
 
 }
 
@@ -194,20 +242,22 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	curProposal := Op{"Join", args.GID, args.Servers, -1}
 	insid := sm.px.Max() + 1
 
-	sm.rpcRoutine(curProposal, insid, nil, sm.joinRpc)
+	sm.rpcRoutine(curProposal, insid, nil, sm.emptyRpc)
 	return nil
 }
 
-func (sm *ShardMaster) leaveRpc(curProposal Op, insid int, reply *QueryReply) {
+func (sm *ShardMaster) leaveRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
 
 	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 	delete(newconfig.Groups, curProposal.GID)
 
-	sm.printConfig("before organize\n", len(sm.configs)-1)
-	sm.organizeShards(curProposal.GID, &newconfig.Shards, curProposal.Oper)
+	sm.printConfig("before leaveRpc organize\n", len(sm.configs)-1)
+	//sm.printConfigs("before leaveRpc organize\n")
+	sm.organizeShards(curProposal.GID, &newconfig, curProposal.Oper)
 	sm.configs = append(sm.configs, newconfig)
-	sm.printConfig("after organize\n", len(sm.configs)-1)
+	//sm.printConfigs("after leaveRpcorganize\n")
+	sm.printConfig("after leaveRpc organize\n", len(sm.configs)-1)
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
@@ -218,12 +268,12 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	curProposal := Op{"Leave", args.GID, nil, -1}
 	insid := sm.px.Max() + 1
 
-	sm.rpcRoutine(curProposal, insid, nil, sm.leaveRpc)
+	sm.rpcRoutine(curProposal, insid, nil, sm.emptyRpc)
 
 	return nil
 }
 
-func (sm *ShardMaster) moveRpc(curProposal Op, insid int, reply *QueryReply) {
+func (sm *ShardMaster) moveRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
 	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 
@@ -244,14 +294,47 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	curProposal := Op{"Move", args.GID, nil, args.Shard}
 	insid := sm.px.Max() + 1
 
-	sm.rpcRoutine(curProposal, insid, nil, sm.moveRpc)
+	sm.rpcRoutine(curProposal, insid, nil, sm.emptyRpc)
 
 	return nil
+}
+
+func (sm *ShardMaster) interpolateLog(insid int, curLog Op) {
+	to := 10 * time.Millisecond
+
+	// step 1: remove seq with duplicate ids
+	for pre_insid := sm.lastLogIdx + 1; pre_insid <= insid; pre_insid++ {
+		//DPrintf("interpretLog %d: call Status\t%d\n", kv.me, pre_insid)
+		err, pre_v := sm.px.Status(pre_insid)
+		// if it is old seq then we ask it to propose
+		sm.px.Start(pre_insid, pre_v)
+		for err != 1 {
+			time.Sleep(to)
+			if to < 10*time.Second {
+				to *= 2
+			}
+			err, pre_v = sm.px.Status(pre_insid)
+		}
+
+		if _, isop := pre_v.(Op); isop {
+			// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
+			if pre_v.(Op).Oper == "Join" {
+				sm.joinRpc(pre_v.(Op))
+			} else if pre_v.(Op).Oper == "Leave" {
+				sm.leaveRpc(pre_v.(Op))
+			} else if pre_v.(Op).Oper == "Move" {
+				sm.moveRpc(pre_v.(Op))
+			}
+			sm.lastLogIdx = pre_insid
+		}
+	}
 }
 
 func (sm *ShardMaster) queryRpc(curProposal Op, insid int, reply *QueryReply) {
 	// reply should assigned to some configuration
 	//DPrintf("query %d config size:%d\n", curProposal.ShardNum, len(sm.configs))
+	// do the interpolating
+	sm.interpolateLog(insid, curProposal)
 	if (curProposal.ShardNum == -1) || (curProposal.ShardNum > len(sm.configs)) {
 		reply.Config = sm.configs[len(sm.configs)-1]
 	} else {
@@ -311,6 +394,7 @@ func StartServer(servers []string, me int) *ShardMaster {
 
 	sm.configs = make([]Config, 1)
 	sm.configs[0].Groups = map[int64][]string{}
+	sm.lastLogIdx = -1
 
 	rpcs := rpc.NewServer()
 
