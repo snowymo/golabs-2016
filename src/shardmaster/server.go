@@ -147,35 +147,6 @@ func (sm *ShardMaster) organizeShards(GID int64, prevCfg *Config, oper string) {
 				}
 			}
 		}
-		// agg := map[int64]int{}
-		// maxGroupCnt := 0
-		// maxGroupId := int64(-1)
-		// for _, v := range prevGrp {
-		// 	if v == GID {
-		// 		// if GID already exist then skip
-		// 		return
-		// 	}
-		// 	agg[v]++
-		// 	if agg[v] > maxGroupCnt {
-		// 		maxGroupCnt = agg[v]
-		// 		maxGroupId = v
-		// 	}
-		// }
-
-		// // cut half
-		// curCnt := 0
-		// for i, v := range prevGrp {
-		// 	if v == 0 {
-		// 		prevGrp[i] = GID
-		// 	} else if v == maxGroupId {
-		// 		curCnt++
-		// 		if curCnt > maxGroupCnt/2 {
-		// 			prevGrp[i] = GID
-		// 		}
-		// 	}
-
-		// }
-		//DPrintf("in organize %v\n", prevGrp)
 	} else if oper == "Leave" {
 		// record all new empty shard index
 		tba := []int{}
@@ -231,7 +202,7 @@ func (sm *ShardMaster) joinRpc(curProposal Op) {
 }
 
 func (sm *ShardMaster) emptyRpc(curProposal Op, insid int, reply *QueryReply) {
-
+	sm.interpolateLog(insid, curProposal)
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
@@ -283,7 +254,6 @@ func (sm *ShardMaster) moveRpc(curProposal Op) {
 	sm.configs = append(sm.configs, newconfig)
 
 	sm.printConfigs("after moving\n")
-
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
@@ -326,6 +296,15 @@ func (sm *ShardMaster) interpolateLog(insid int, curLog Op) {
 				sm.moveRpc(pre_v.(Op))
 			}
 			sm.lastLogIdx = pre_insid
+		}
+	}
+	// step 3, forget logs before last query
+	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
+		err, pre_v := sm.px.Status(pre_insid)
+		if err == paxos.Decided && pre_v.(Op).Oper == "Query" {
+			DPrintf("me:%d Call Done %d\n", sm.me, pre_insid)
+			sm.px.Done(pre_insid)
+			sm.px.Min()
 		}
 	}
 }
