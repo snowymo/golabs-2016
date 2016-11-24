@@ -299,14 +299,14 @@ func (sm *ShardMaster) interpolateLog(insid int, curLog Op) {
 		}
 	}
 	// step 3, forget logs before last query
-	for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
-		err, pre_v := sm.px.Status(pre_insid)
-		if err == paxos.Decided && pre_v.(Op).Oper == "Query" {
-			DPrintf("me:%d Call Done %d\n", sm.me, pre_insid)
-			sm.px.Done(pre_insid)
-			sm.px.Min()
-		}
-	}
+	//for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
+	//	err, pre_v := sm.px.Status(pre_insid)
+	//	if err == paxos.Decided && pre_v.(Op).Oper == "Query" {
+	DPrintf("me:%d Call Done %d\n", sm.me, (insid - 1))
+	sm.px.Done(insid - 1)
+	sm.px.Min()
+	//	}
+	//}
 }
 
 func (sm *ShardMaster) queryRpc(curProposal Op, insid int, reply *QueryReply) {
