@@ -14,21 +14,24 @@ import "encoding/gob"
 import "math/rand"
 import "shardmaster"
 
-
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
-		log.Printf(format, a...)
+		fmt.Printf(format, a...)
 	}
 	return
 }
 
+type rpcFunc func(Op, int, *GetReply)
 
 type Op struct {
 	// Your definitions here.
+	Oper  string
+	Key   string
+	Value string
+	Uid   int64
 }
-
 
 type ShardKV struct {
 	mu         sync.Mutex
@@ -42,17 +45,89 @@ type ShardKV struct {
 	gid int64 // my replica group ID
 
 	// Your definitions here.
+	config shardmaster.Config
 }
 
+func (kv *ShardKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterProp rpcFunc) {
+	DPrintf("%v RPC me:%d id-%d\tkey-%v\tvalue-%v\n", curProposal.Oper, kv.me, insid, curProposal.Key, curProposal.Value)
+
+	kv.px.Start(insid, curProposal)
+
+	to := 10 * time.Millisecond
+	for {
+		status, proposal := kv.px.Status(insid)
+		if status == paxos.Decided {
+			if _, isop := proposal.(Op); isop {
+				// check if it is exact the same propose
+				if proposal.(Op) == curProposal {
+					// kv.CheckMinDone(insid, curProposal)
+					// kv.freeMem()
+					afterProp(curProposal, insid, reply)
+					return
+				} else {
+					// wrong proposal
+					insid = kv.px.Max() + 1
+					DPrintf("%v RPC me:%d id-%d\tkey-%v\tvalue-%v\n", curProposal.Oper, kv.me, insid, curProposal.Key, curProposal.Value)
+					kv.px.Start(insid, curProposal)
+					to = 10 * time.Millisecond
+				}
+			} else {
+				DPrintf("%v RPC me:%d id-%d\tWrong op type\n", curProposal.Oper, kv.me, insid)
+			}
+		}
+		time.Sleep(to)
+		if to < 10*time.Second {
+			to *= 2
+		}
+	}
+}
+
+func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
+	//kv.interpolateLog(insid, curProposal)
+	if curProposal.Oper == "Get" {
+
+	}
+	reply.Err = OK
+}
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	// check if the shard belongs to the group id contain current server
+	if kv.gid != kv.config.Shards[args.Shard] {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
+
+	curProposal := Op{"Get", args.Key, "", args.Id}
+	insid := kv.px.Max() + 1
+
+	kv.rpcRoutine(curProposal, insid, reply, kv.emptyRpc)
+
 	return nil
 }
 
 // RPC handler for client Put and Append requests
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	// check if the shard belongs to the group id contain current server
+	if kv.gid != kv.config.Shards[args.Shard] {
+		reply.Err = ErrWrongGroup
+		return nil
+	}
+
+	curProposal := Op{args.Op, args.Key, args.Value, args.Id}
+	insid := kv.px.Max() + 1
+
+	tmpReply := &GetReply{}
+	kv.rpcRoutine(curProposal, insid, tmpReply, kv.emptyRpc)
+	reply.Err = tmpReply.Err
+
 	return nil
 }
 
@@ -61,6 +136,17 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 // if so, re-configure.
 //
 func (kv *ShardKV) tick() {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	curCfg := kv.sm.Query(-1)
+	if kv.config.Num != curCfg.Num {
+		//DPrintf("me:%d-%d\tchange config from %v to %v\n", kv.gid, kv.me, kv.config, curCfg)
+		kv.config.Num = curCfg.Num
+		kv.config.Shards = curCfg.Shards
+		shardmaster.CopyMap(kv.config.Groups, curCfg.Groups)
+		//DPrintf("me:%d\tafter change config to %v\n", kv.me, kv.config)
+	}
 }
 
 // tell the server to shut itself down.
@@ -108,13 +194,13 @@ func StartServer(gid int64, shardmasters []string,
 	kv.sm = shardmaster.MakeClerk(shardmasters)
 
 	// Your initialization code here.
+	kv.config = shardmaster.Config{-1, [shardmaster.NShards]int64{}, map[int64][]string{}}
 	// Don't call Join().
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
 
 	kv.px = paxos.Make(servers, me, rpcs)
-
 
 	os.Remove(servers[me])
 	l, e := net.Listen("unix", servers[me])

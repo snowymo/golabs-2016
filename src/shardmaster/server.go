@@ -72,7 +72,9 @@ func (sm *ShardMaster) printConfigs(format string) {
 }
 
 func (sm *ShardMaster) rpcRoutine(curProposal Op, insid int, reply *QueryReply, afterProp rpcFunc) {
-	DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+	if curProposal.Oper != "Query" || curProposal.ShardNum != -1 {
+		DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+	}
 
 	sm.px.Start(insid, curProposal)
 
@@ -130,7 +132,7 @@ func (sm *ShardMaster) organizeShards(GID int64, prevCfg *Config, oper string) {
 					maxGroupId = k
 				}
 			}
-			DPrintf("in Join agg:%v maxGroupCnt:%d maxGroupId:%d agg[%d]:%d\n", agg, maxGroupCnt, maxGroupId, GID, agg[GID])
+			//DPrintf("in Join agg:%v maxGroupCnt:%d maxGroupId:%d agg[%d]:%d\n", agg, maxGroupCnt, maxGroupId, GID, agg[GID])
 			if agg[GID] >= (maxGroupCnt - 1) {
 				break
 			}
@@ -181,7 +183,7 @@ func (sm *ShardMaster) organizeShards(GID int64, prevCfg *Config, oper string) {
 
 }
 
-func copyMap(dstMap map[int64][]string, srcMap map[int64][]string) {
+func CopyMap(dstMap map[int64][]string, srcMap map[int64][]string) {
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
@@ -190,7 +192,7 @@ func copyMap(dstMap map[int64][]string, srcMap map[int64][]string) {
 func (sm *ShardMaster) joinRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
 
-	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+	CopyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 	newconfig.Groups[curProposal.GID] = curProposal.Servers
 	//sm.printConfigs("before organize\n")
 	sm.printConfig("before joinRpc organize\n", len(sm.configs)-1)
@@ -201,8 +203,31 @@ func (sm *ShardMaster) joinRpc(curProposal Op) {
 
 }
 
+func (sm *ShardMaster) checkMinDone(insid int) {
+	// ask [min,insid]'s status to get log, if it is cfg related then continue, otherwise stop then call Done
+	//DPrintf("here1\n")
+	pre_insid := sm.px.Min()
+	for ; pre_insid < insid; pre_insid++ {
+		//DPrintf("here2 %d\n", pre_insid)
+		err, pre_v := sm.px.Status(pre_insid)
+		if err == paxos.Decided {
+			_, ok := pre_v.(Op)
+			if !ok {
+				break
+			}
+		} else {
+			break
+		}
+	}
+	//DPrintf("here3 %d\n", pre_insid)
+	sm.px.Done(pre_insid)
+	//DPrintf("here4 %d\n", pre_insid)
+	sm.px.Min()
+}
+
 func (sm *ShardMaster) emptyRpc(curProposal Op, insid int, reply *QueryReply) {
 	sm.interpolateLog(insid, curProposal)
+	sm.checkMinDone(insid)
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
@@ -220,7 +245,7 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 func (sm *ShardMaster) leaveRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
 
-	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+	CopyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 	delete(newconfig.Groups, curProposal.GID)
 
 	sm.printConfig("before leaveRpc organize\n", len(sm.configs)-1)
@@ -246,7 +271,7 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 
 func (sm *ShardMaster) moveRpc(curProposal Op) {
 	newconfig := Config{len(sm.configs), sm.configs[len(sm.configs)-1].Shards, map[int64][]string{}}
-	copyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
+	CopyMap(newconfig.Groups, sm.configs[len(sm.configs)-1].Groups)
 
 	sm.printConfigs("before moving\n")
 
@@ -299,14 +324,17 @@ func (sm *ShardMaster) interpolateLog(insid int, curLog Op) {
 		}
 	}
 	// step 3, forget logs before last query
-	//for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
-	//	err, pre_v := sm.px.Status(pre_insid)
-	//	if err == paxos.Decided && pre_v.(Op).Oper == "Query" {
-	DPrintf("me:%d Call Done %d\n", sm.me, (insid - 1))
-	sm.px.Done(insid - 1)
-	sm.px.Min()
-	//	}
-	//}
+	// for pre_insid := insid - 1; pre_insid >= 0; pre_insid-- {
+	// 	err, pre_v := sm.px.Status(pre_insid)
+	// 	if err == paxos.Decided && pre_v.(Op).Oper == "Query" {
+	// 		if curLog.Oper != "Query" {
+	// 			DPrintf("me:%d Call Done %d\n", sm.me, (insid - 1))
+	// 			sm.px.Done(insid - 1)
+	// 			sm.px.Min()
+	// 		}
+
+	// 	}
+	// }
 }
 
 func (sm *ShardMaster) queryRpc(curProposal Op, insid int, reply *QueryReply) {
@@ -314,6 +342,7 @@ func (sm *ShardMaster) queryRpc(curProposal Op, insid int, reply *QueryReply) {
 	//DPrintf("query %d config size:%d\n", curProposal.ShardNum, len(sm.configs))
 	// do the interpolating
 	sm.interpolateLog(insid, curProposal)
+	sm.checkMinDone(insid)
 	if (curProposal.ShardNum == -1) || (curProposal.ShardNum > len(sm.configs)) {
 		reply.Config = sm.configs[len(sm.configs)-1]
 	} else {
