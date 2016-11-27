@@ -1,5 +1,10 @@
 package shardkv
 
+import "shardmaster"
+import (
+	"paxos"
+)
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running op-at-a-time paxos.
@@ -43,3 +48,19 @@ type GetReply struct {
 	Err   Err
 	Value string
 }
+
+type BKArgs struct {
+	Config    shardmaster.Config
+	LastLogId int
+	Uidmap    map[int64]int //uidmap = make(map[int64]bool)
+	LogCache  map[int]Op    // logCache = make(map[int]Op)
+	ValidList map[int]bool  // validList = make(map[int]bool, 0)
+	MinDone   int
+	//PX        **paxos.Paxos
+}
+
+type BKReply struct {
+	Err Err
+}
+
+const MAXUID = 4294967296

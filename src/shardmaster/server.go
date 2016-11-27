@@ -215,7 +215,7 @@ func (sm *ShardMaster) checkMinDone(insid int) {
 			if !ok {
 				break
 			}
-		} else {
+		} else if err != paxos.Forgotten {
 			break
 		}
 	}
