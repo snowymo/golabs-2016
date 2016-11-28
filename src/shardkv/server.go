@@ -158,7 +158,7 @@ func (kv *ShardKV) rmDuplicate(insid int, curLog Op) {
 				// already true, discard this entry
 				DPrintf("rmDuplicate: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
 			} else {
-				DPrintf("rmDuplicate: \t%d notdup:%v\n", pre_insid, pre_v.(Op))
+				//DPrintf("rmDuplicate: \t%d notdup:%v\n", pre_insid, pre_v.(Op))
 				kv.logCache[pre_insid] = pre_v.(Op)
 				//DPrintf("\ncur shardkv:%d-%d %v\n", kv.gid, kv.me, kv.logCache)
 				if pre_v.(Op).Uid != -1 {
@@ -171,6 +171,31 @@ func (kv *ShardKV) rmDuplicate(insid int, curLog Op) {
 			kv.validList[pre_insid] = true
 		}
 	}
+}
+
+func (kv *ShardKV) Update2(args *UpdateArgs, reply *UpdateReply) error {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	if _, uidok := kv.uidmap[args.Id]; uidok {
+		// already true, discard this entry
+		DPrintf("Update me:%d-%d duplicate:%v\n", kv.gid, kv.me, args)
+	} else {
+		DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
+		reply.DB = make(map[string]string)
+		reply.Uidmap = make(map[int64]int)
+		// it is possible that this server has not done snapshot
+		if args.SnapNo >= kv.config.Num {
+			DPrintf("Update me:%d-%d not snapshot yet and do tick:%v\n", kv.gid, kv.me, args)
+			kv.Snapshot()
+			kv.updateCfg(kv.sm.Query(-1))
+		}
+		CopyMapSS(reply.DB, kv.snapshots[args.SnapNo].DB)
+		CopyMapII(reply.Uidmap, kv.snapshots[args.SnapNo].Uidmap)
+		reply.Err = OK
+		DPrintf("Update me:%d-%d\tlogs-%v\ndb-%v\n\n", kv.gid, kv.me, kv.logCache, reply.DB)
+	}
+	return nil
 }
 
 func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
@@ -236,7 +261,6 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// kv.printdb()
 	for logidx := kv.lastLogId + 1; logidx <= insid; logidx++ {
 		logentry, logok := kv.logCache[logidx]
-		DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
 		if logok && (logentry.Key == curLog.Key || logentry.Oper == "Reconfig" || curLog.Oper == "SnapShot") {
 			if logentry.Oper == "Put" {
 				kv.db[logentry.Key] = logentry.Value
@@ -244,6 +268,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 			} else if logentry.Oper == "Append" {
 				kv.db[logentry.Key] += logentry.Value
 			} else if logentry.Oper == "Reconfig" {
+				DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
 				//if v, vok := kv.validList[logidx]; !vok || (vok && v) {
 				for shardid, groupid := range logentry.GSmap {
 					servers, sok := kv.config.Groups[groupid]
@@ -261,11 +286,11 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 								break
 							}
 						}
-						time.Sleep(100 * time.Millisecond)
+						time.Sleep(50 * time.Millisecond)
 					}
 				}
+				DPrintf("interpretLog me:%d-%d %v result-%v\n", logentry, kv.db)
 			}
-			DPrintf("interpretLog: %v result-%v\n", logentry, kv.db)
 		}
 	}
 	kv.lastLogId = insid
@@ -469,7 +494,7 @@ func (kv *ShardKV) Snapshot() {
 
 func (kv *ShardKV) checkGG(curCfg shardmaster.Config) {
 	//if len(kv.config.Groups) > 0 {
-	backupGrp := map[GGPair]bool{}
+	//backupGrp := map[GGPair]bool{}
 	//DPrintf("me:%d-%d\tchange config from %v to %v\n", kv.gid, kv.me, kv.config, curCfg)
 	// check if there is new group take over current group
 	shards := make(map[int]int64)
@@ -478,21 +503,31 @@ func (kv *ShardKV) checkGG(curCfg shardmaster.Config) {
 
 		//if b, bok := backupGrp[GGPair{gid, curGid}]; (!bok || (bok && !b)) && gid != curGid {
 		//DPrintf("me:%d-%d shard:%d gid:%d curgid:%d\n", kv.gid, kv.me, i, gid, curGid)
-		backupGrp[GGPair{gid, curGid}] = true
-		if kv.gid == gid {
-			// replica to others, snapshot self
-			kv.Snapshot()
-		} else if kv.gid == curGid {
-			// others replica to self, reconfig self
-			if gid > 0 {
-				shards[i] = gid
+		//backupGrp[GGPair{gid, curGid}] = true
+		if gid != curGid {
+			if kv.gid == gid {
+				// replica to others, snapshot self
+				kv.Snapshot()
+				break
+			} else if kv.gid == curGid {
+				// others replica to self, reconfig self
+				if gid > 0 {
+					shards[i] = gid
+				}
 			}
 		}
-		//}
 	}
 	if len(shards) > 0 {
 		kv.Reconfig(shards)
 	}
+}
+
+func (kv *ShardKV) updateCfg(curCfg shardmaster.Config) {
+	// update configuration
+	kv.config.Num = curCfg.Num
+	kv.config.Shards = curCfg.Shards
+	shardmaster.CopyMap(kv.config.Groups, curCfg.Groups)
+	DPrintf("me:%d-%d\tafter change config to %v\n", kv.gid, kv.me, kv.config)
 }
 
 //
@@ -506,12 +541,7 @@ func (kv *ShardKV) tick() {
 	curCfg := kv.sm.Query(-1)
 	if kv.config.Num != curCfg.Num {
 		kv.checkGG(curCfg)
-
-		// update configuration
-		kv.config.Num = curCfg.Num
-		kv.config.Shards = curCfg.Shards
-		shardmaster.CopyMap(kv.config.Groups, curCfg.Groups)
-		DPrintf("me:%d-%d\tafter change config to %v\n", kv.gid, kv.me, kv.config)
+		kv.updateCfg(curCfg)
 	}
 }
 
