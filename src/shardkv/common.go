@@ -1,8 +1,7 @@
 package shardkv
 
-import "shardmaster"
 import (
-	"paxos"
+	"shardmaster"
 )
 
 //
@@ -18,6 +17,7 @@ const (
 	OK            = "OK"
 	ErrNoKey      = "ErrNoKey"
 	ErrWrongGroup = "ErrWrongGroup"
+	ErrNoSnap     = "ErrNoSnap"
 )
 
 type Err string
@@ -49,17 +49,23 @@ type GetReply struct {
 	Value string
 }
 
-type BKArgs struct {
-	Config    shardmaster.Config
-	LastLogId int
-	Uidmap    map[int64]int //uidmap = make(map[int64]bool)
-	LogCache  map[int]Op    // logCache = make(map[int]Op)
-	ValidList map[int]bool  // validList = make(map[int]bool, 0)
-	MinDone   int
-	//PX        **paxos.Paxos
+type UpdateArgs struct {
+	SnapNo int
+	Id     int64 // unique id
 }
 
-type BKReply struct {
+type UpdateReply struct {
+	Uidmap map[int64]int //uidmap = make(map[int64]bool)
+	DB     map[string]string
+	Err    Err
+}
+
+type UpSnapArgs struct {
+	Config shardmaster.Config
+	Id     int64 // unique id
+}
+
+type UpSnapReply struct {
 	Err Err
 }
 
