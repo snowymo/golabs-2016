@@ -77,6 +77,7 @@ type ShardKV struct {
 	minDone   int
 
 	snapshots map[int]SnapShot
+	reconfigs map[int]bool
 }
 
 func (kv *ShardKV) sameMap(map1 map[int]int64, map2 map[int]int64) bool {
@@ -288,7 +289,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	//endIdx := insid
 	if dupSeqid := kv.uidmap[curLog.Uid]; (dupSeqid != insid) && (curLog.Uid != -1) {
 		DPrintf("interpretLog: duplicate and skip %v\n", curLog)
-		return kv.db[curLog.Key]
+		return NOK
 	}
 	// if it is not duplicate, or did not get older Get before
 	// startIdx := 0
@@ -314,30 +315,37 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 			} else if logentry.Oper == "Reconfig" {
 				DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
 				//if v, vok := kv.validList[logidx]; !vok || (vok && v) {
-				groupUp := 0
-				for groupid, shards := range logentry.GSmap {
-					servers, sok := kv.config.Groups[groupid]
-					for sok {
-						// try each server in that replication group.
-						for _, srv := range servers {
-							args := &UpdateArgs{logentry.ConfigNo, nrand() % MAXUID}
-							var reply UpdateReply
-							DPrintf("interLog me:%d-%d before call %d\n\tresult-%v\n", kv.gid, kv.me, groupid, kv.db)
-							// kv.mu.Unlock()
-							// kv.mu.Lock()
-							ok := call(srv, "ShardKV.Update", args, &reply)
-							if ok && (reply.Err == OK) {
-								// update from the reply data
-								kv.updateState(reply, shards)
-								DPrintf("interLog me:%d-%d after update %v\n\tresult-%v\n", kv.gid, kv.me, logentry, kv.db)
-								groupUp++
-								sok = false
-								break
+				if _, rcok := kv.reconfigs[logentry.ConfigNo]; !rcok {
+					DPrintf("do recfg me:%d-%d for cfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+					kv.reconfigs[logentry.ConfigNo] = true
+					groupUp := 0
+					for groupid, shards := range logentry.GSmap {
+						servers, sok := kv.config.Groups[groupid]
+						for sok {
+							// try each server in that replication group.
+							for _, srv := range servers {
+								args := &UpdateArgs{logentry.ConfigNo, nrand() % MAXUID}
+								var reply UpdateReply
+								DPrintf("interLog me:%d-%d before call %d\n\tresult-%v\n", kv.gid, kv.me, groupid, kv.db)
+								// kv.mu.Unlock()
+								// kv.mu.Lock()
+								ok := call(srv, "ShardKV.Update", args, &reply)
+								if ok && (reply.Err == OK) {
+									// update from the reply data
+									kv.updateState(reply, shards)
+									DPrintf("interLog me:%d-%d after update %v\n\tresult-%v\n", kv.gid, kv.me, logentry, kv.db)
+									groupUp++
+									sok = false
+									break
+								}
 							}
+							time.Sleep(50 * time.Millisecond)
 						}
-						time.Sleep(50 * time.Millisecond)
 					}
+				} else {
+					DPrintf("do recfg me:%d-%d already cfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 				}
+
 				// if groupUp != len(logentry.GSmap) {
 				// 	DPrintf("interLog me:%d-%d not update enough %d %d\n", kv.gid, kv.me, groupUp, len(logentry.GSmap))
 				// 	return "NotUpdate"
@@ -450,15 +458,19 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 	kv.rmDuplicate(insid, curProposal)
 
 	//	if curProposal.Oper == "Get" {
-	reply.Value = kv.interpretLog(insid, curProposal)
-	//	}
+	ret := kv.interpretLog(insid, curProposal)
+	if ret == NOK {
+		reply.Err = NOK
+	} else {
+		reply.Value //	}
+		kv.CheckMinDone(insid, curProposal)
+		kv.freeMem()
+		//if reply.Value == "NotUpdate" {
+		//	reply.Err = NOK
+		//} else {
+		reply.Err = OK
+	}
 
-	kv.CheckMinDone(insid, curProposal)
-	kv.freeMem()
-	//if reply.Value == "NotUpdate" {
-	//	reply.Err = NOK
-	//} else {
-	reply.Err = OK
 	//}
 
 }
@@ -718,6 +730,7 @@ func StartServer(gid int64, shardmasters []string,
 	kv.minDone = -1
 	kv.db = make(map[string]string)
 	kv.snapshots = make(map[int]SnapShot)
+	kv.reconfigs = make(map[int]bool)
 	// Don't call Join().
 
 	rpcs := rpc.NewServer()
