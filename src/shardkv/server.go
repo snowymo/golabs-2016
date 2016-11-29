@@ -323,8 +323,8 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 							args := &UpdateArgs{logentry.ConfigNo, nrand() % MAXUID}
 							var reply UpdateReply
 							DPrintf("interLog me:%d-%d before call %d\n\tresult-%v\n", kv.gid, kv.me, groupid, kv.db)
-							kv.mu.Unlock()
-							kv.mu.Lock()
+							// kv.mu.Unlock()
+							// kv.mu.Lock()
 							ok := call(srv, "ShardKV.Update", args, &reply)
 							if ok && (reply.Err == OK) {
 								// update from the reply data
@@ -443,6 +443,16 @@ func (kv *ShardKV) freeMem() {
 }
 
 func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	// check if current cfg is updated
+	curCfg := kv.sm.Query(-1)
+	if curCfg.Num != kv.config.Num {
+		reply.Err = NOK
+		DPrintf("in %v %d-%d config:%d not latest:%d\n", curProposal, kv.gid, kv.me, kv.config.Num, curCfg.Num)
+		return
+	}
 	// step 1: remove seq with duplicate ids
 	kv.rmDuplicate(insid, curProposal)
 
@@ -452,18 +462,16 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
 	kv.CheckMinDone(insid, curProposal)
 	kv.freeMem()
-	if reply.Value == "NotUpdate" {
-		reply.Err = NOK
-	} else {
-		reply.Err = OK
-	}
+	//if reply.Value == "NotUpdate" {
+	//	reply.Err = NOK
+	//} else {
+	reply.Err = OK
+	//}
 
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 
 	// check if the shard belongs to the group id contain current server
 	if kv.gid != kv.config.Shards[args.Shard] {
@@ -484,8 +492,6 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 // RPC handler for client Put and Append requests
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 
 	// check if the shard belongs to the group id contain current server
 	if kv.gid != kv.config.Shards[args.Shard] {
@@ -568,6 +574,9 @@ func (kv *ShardKV) Snapshot() {
 		//DPrintf("Snapshot: %v\n", kv.snapshots)
 		curProposal := Op{"SnapShot", "", "", kv.config.Num, nil, -1}
 		insid := kv.px.Max()
+		if insid == -1 {
+			insid = 0
+		}
 		tmpReply := &GetReply{}
 		kv.rpcRoutine(curProposal, insid, tmpReply, kv.snapProp)
 	}
@@ -613,6 +622,8 @@ func (kv *ShardKV) checkGG(curCfg shardmaster.Config) {
 }
 
 func (kv *ShardKV) updateCfg(curCfg shardmaster.Config) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	// update configuration
 	kv.config.Num = curCfg.Num
 	kv.config.Shards = curCfg.Shards
@@ -633,12 +644,12 @@ func (kv *ShardKV) sameShard(sh1 [shardmaster.NShards]int64, sh2 [shardmaster.NS
 // if so, re-configure.
 //
 func (kv *ShardKV) tick() {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	// kv.mu.Lock()
+	// defer kv.mu.Unlock()
 
 	curCfg := kv.sm.Query(-1)
 	if kv.config.Num != curCfg.Num {
-		DPrintf("latestCfg: %d\t%v\n", curCfg.Num, curCfg.Shards)
+		DPrintf("me%d-%d\tlatestCfg: %d\t%v\n", kv.gid, kv.me, curCfg.Num, curCfg.Shards)
 		tmpCfg := kv.sm.Query(kv.config.Num + 1)
 		for kv.sameShard(tmpCfg.Shards, kv.config.Shards) && (tmpCfg.Num != curCfg.Num) {
 			kv.updateCfg(tmpCfg)
