@@ -18,6 +18,7 @@ const (
 	ErrNoKey      = "ErrNoKey"
 	ErrWrongGroup = "ErrWrongGroup"
 	ErrNoSnap     = "ErrNoSnap"
+	NOK           = "NOK"
 )
 
 type Err string

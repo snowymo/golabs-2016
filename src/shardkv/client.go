@@ -87,6 +87,7 @@ func (ck *Clerk) Get(key string) string {
 	defer ck.mu.Unlock()
 
 	// You'll have to modify Get().
+	uid := nrand() % MAXUID
 
 	for {
 		shard := key2shard(key)
@@ -98,8 +99,9 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &GetArgs{key, nrand() % MAXUID, shard}
+				args := &GetArgs{key, uid, shard}
 				var reply GetReply
+				DPrintf("\nCLIENT get %v from %d\n", key, gid)
 				ok := call(srv, "ShardKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
@@ -123,6 +125,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	defer ck.mu.Unlock()
 
 	// You'll have to modify PutAppend().
+	uid := nrand() % MAXUID
 
 	for {
 		shard := key2shard(key)
@@ -134,8 +137,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &PutAppendArgs{key, value, op, nrand() % MAXUID, shard}
+				args := &PutAppendArgs{key, value, op, uid, shard}
 				var reply PutAppendReply
+				DPrintf("\nCLIENT %v %v %v from %d\n", op, key, value, gid)
 				ok := call(srv, "ShardKV.PutAppend", args, &reply)
 				if ok && reply.Err == OK {
 					return
