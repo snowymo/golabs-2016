@@ -104,7 +104,7 @@ func (ck *Clerk) Get(key string) string {
 				DPrintf("\nCLIENT get %v from %d\n", key, gid)
 				ok := call(srv, "ShardKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					time.Sleep(300 * time.Millisecond)
+					//time.Sleep(300 * time.Millisecond)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {

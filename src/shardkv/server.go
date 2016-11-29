@@ -446,13 +446,6 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	// check if current cfg is updated
-	curCfg := kv.sm.Query(-1)
-	if curCfg.Num != kv.config.Num {
-		reply.Err = NOK
-		DPrintf("in %v %d-%d config:%d not latest:%d\n", curProposal, kv.gid, kv.me, kv.config.Num, curCfg.Num)
-		return
-	}
 	// step 1: remove seq with duplicate ids
 	kv.rmDuplicate(insid, curProposal)
 
@@ -472,14 +465,19 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
-
+	// check if current cfg is updated
+	curCfg := kv.sm.Query(-1)
+	if curCfg.Num != kv.config.Num {
+		reply.Err = NOK
+		DPrintf("in %v %d-%d config:%d not latest:%d\n", args, kv.gid, kv.me, kv.config.Num, curCfg.Num)
+		return nil
+	}
 	// check if the shard belongs to the group id contain current server
 	if kv.gid != kv.config.Shards[args.Shard] {
 		reply.Err = ErrWrongGroup
 		DPrintf("in Get %d-%d %v\n", kv.gid, kv.me, reply.Err)
 		return nil
 	}
-
 	curProposal := Op{"Get", args.Key, "", kv.config.Num, nil, args.Id}
 	//kv.px.Lab4print()
 	insid := kv.px.Max() + 1
@@ -492,13 +490,19 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 // RPC handler for client Put and Append requests
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
-
+	// check if current cfg is updated
+	curCfg := kv.sm.Query(-1)
+	if curCfg.Num != kv.config.Num {
+		reply.Err = NOK
+		DPrintf("in %v %d-%d config:%d not latest:%d\n", args, kv.gid, kv.me, kv.config.Num, curCfg.Num)
+		return nil
+	}
 	// check if the shard belongs to the group id contain current server
 	if kv.gid != kv.config.Shards[args.Shard] {
 		reply.Err = ErrWrongGroup
+		DPrintf("in Get %d-%d %v\n", kv.gid, kv.me, reply.Err)
 		return nil
 	}
-
 	curProposal := Op{args.Op, args.Key, args.Value, kv.config.Num, nil, args.Id}
 	insid := kv.px.Max() + 1
 
