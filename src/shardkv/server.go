@@ -288,8 +288,10 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
 	//endIdx := insid
 	if dupSeqid := kv.uidmap[curLog.Uid]; (dupSeqid != insid) && (curLog.Uid != -1) {
-		DPrintf("interpretLog: duplicate and skip %v\n", curLog)
-		return NOK
+		DPrintf("interpretLog: duplicate and skip %v v-%v\n", curLog, kv.db[curLog.Key])
+		if kv.lastLogId > dupSeqid {
+			return kv.db[curLog.Key]
+		}
 	}
 	// if it is not duplicate, or did not get older Get before
 	// startIdx := 0
@@ -306,6 +308,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	for logidx := kv.lastLogId + 1; logidx <= insid; logidx++ {
 		logentry, logok := kv.logCache[logidx]
 		if logok {
+			kv.lastLogId = insid
 			if logentry.Oper == "Put" {
 				kv.db[logentry.Key] = logentry.Value
 				DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, logentry.Value)
@@ -363,7 +366,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 			}
 		}
 	}
-	kv.lastLogId = insid
+
 	//DPrintf("\ncur shardkv:%d-%d %v %v\n", kv.gid, kv.me, kv.logCache, kv.db)
 	//DPrintf("\n")
 	return kv.db[curLog.Key]
@@ -458,19 +461,15 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 	kv.rmDuplicate(insid, curProposal)
 
 	//	if curProposal.Oper == "Get" {
-	ret := kv.interpretLog(insid, curProposal)
-	if ret == NOK {
-		reply.Err = NOK
-	} else {
-		reply.Value //	}
-		kv.CheckMinDone(insid, curProposal)
-		kv.freeMem()
-		//if reply.Value == "NotUpdate" {
-		//	reply.Err = NOK
-		//} else {
-		reply.Err = OK
-	}
+	reply.Value = kv.interpretLog(insid, curProposal)
+	//	}
 
+	kv.CheckMinDone(insid, curProposal)
+	kv.freeMem()
+	//if reply.Value == "NotUpdate" {
+	//	reply.Err = NOK
+	//} else {
+	reply.Err = OK
 	//}
 
 }
@@ -526,8 +525,8 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 }
 
 func CopyMapII(dstMap map[int64]int, srcMap map[int64]int) {
-	for k, v := range srcMap {
-		dstMap[k] = v
+	for k, _ := range srcMap {
+		dstMap[k] = 0
 	}
 	//DPrintf("after cpy %v\n", dstMap)
 }
