@@ -545,7 +545,11 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 func CopyMapII(dstMap map[int64]int, srcMap map[int64]int) {
 	for k, _ := range srcMap {
-		dstMap[k] = -1
+		if _, ok := dstMap[k]; !ok {
+			// if not exist means it is not the original uid source, then assign -1
+			dstMap[k] = -1
+		}
+
 	}
 	//DPrintf("after cpy %v\n", dstMap)
 }
