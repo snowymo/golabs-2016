@@ -320,7 +320,6 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				continue
 			}
 
-			kv.lastLogId = insid
 			if logentry.Oper == "Put" {
 				kv.db[logentry.Key] = logentry.Value
 				DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, logentry.Value)
@@ -332,6 +331,8 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				//if v, vok := kv.validList[logidx]; !vok || (vok && v) {
 				if _, rcok := kv.reconfigs[logentry.ConfigNo]; !rcok {
 					DPrintf("do recfg me:%d-%d WRONG not yet recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+					// stop here until snapshot is ready
+					return NOK
 				} else if _, brok := kv.bReCfg[logentry.ConfigNo]; brok {
 					DPrintf("do recfg me:%d-%d dupReconfig recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 				} else {
@@ -356,6 +357,8 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 					DPrintf("do snapshot me:%d-%d already cfg-%d db-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, sn)
 				}
 			}
+
+			kv.lastLogId = insid
 		}
 	}
 
@@ -454,11 +457,11 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
 	kv.CheckMinDone(insid, curProposal)
 	kv.freeMem()
-	//if reply.Value == "NotUpdate" {
-	//	reply.Err = NOK
-	//} else {
-	reply.Err = OK
-	//}
+	if reply.Value == NOK {
+		reply.Err = NOK
+	} else {
+		reply.Err = OK
+	}
 
 }
 
@@ -614,7 +617,8 @@ func (kv *ShardKV) snapProp(curProposal Op, insid int, reply *GetReply) {
 func (kv *ShardKV) Snapshot() {
 	// send snapshot to ours and record cur state to snapshots
 	// check if already snapshot current state
-	if _, ok := kv.snapshots[kv.config.Num]; !ok {
+	_, ok := kv.snapshots[kv.config.Num]
+	for !ok {
 		//DPrintf("Snapshot: %v\n", kv.snapshots)
 		curProposal := Op{"SnapShot", "", "", kv.config.Num, nil, -1}
 		insid := kv.px.Max()
@@ -623,6 +627,7 @@ func (kv *ShardKV) Snapshot() {
 		}
 		tmpReply := &GetReply{}
 		kv.rpcRoutine(curProposal, insid, tmpReply, kv.snapProp)
+		_, ok = kv.snapshots[kv.config.Num]
 	}
 
 	// send rpc to other servers in the same group to
