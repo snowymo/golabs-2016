@@ -79,6 +79,8 @@ type ShardKV struct {
 	snapshots map[int]SnapShot
 	reconfigs map[int]SnapShot
 	bReCfg    map[int]bool
+
+	updateMu sync.Mutex
 }
 
 func (kv *ShardKV) sameMap(map1 map[int]int64, map2 map[int]int64) bool {
@@ -122,6 +124,9 @@ func (kv *ShardKV) sameOp(op1 Op, op2 Op) bool {
 }
 
 func (kv *ShardKV) printLog() {
+	// if Debug == 1 {
+	// 	kv.mu.Lock()
+	// 	defer kv.mu.Unlock()
 	DPrintf("log size:%d\n", len(kv.logCache))
 	var keyInsids []int
 	for keyInsid, _ := range kv.logCache {
@@ -131,6 +136,7 @@ func (kv *ShardKV) printLog() {
 	for _, keyInsid := range keyInsids {
 		DPrintf("\tsortlog:%d\t%v\n", keyInsid, kv.logCache[keyInsid])
 	}
+	//}
 }
 
 func (kv *ShardKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterProp rpcFunc) {
@@ -237,26 +243,31 @@ func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
 	// kv.mu.Lock()
 	// defer kv.mu.Unlock()
 	DPrintf("enter Update RPC %d-%d\n", kv.gid, kv.me)
-	if _, uidok := kv.uidmap[args.Id]; uidok {
-		// already true, discard this entry
-		DPrintf("Update me:%d-%d duplicate:%v\n", kv.gid, kv.me, args)
+	// if _, uidok := kv.uidmap[args.Id]; uidok {
+	// 	// already true, discard this entry
+	// 	DPrintf("Update me:%d-%d duplicate:%v\n", kv.gid, kv.me, args)
+	// } else {
+	//DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
+	reply.DB = make(map[string]string)
+	reply.Uidmap = make(map[int64]int)
+	// it is possible that this server has not done snapshot
+	// according to atomic
+	kv.updateMu.Lock()
+	defer kv.updateMu.Unlock()
+	if sn, ok := kv.snapshots[args.SnapNo]; ok {
+
+		CopyMapSS(reply.DB, sn.DB)
+		CopyMapII(reply.Uidmap, sn.Uidmap)
+
+		reply.Err = OK
+		DPrintf("Update me:%d-%d\tdb-%v\nlog", kv.gid, kv.me, reply.DB)
+		// kv.printLog()
+		// DPrintf("\n")
 	} else {
-		DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
-		reply.DB = make(map[string]string)
-		reply.Uidmap = make(map[int64]int)
-		// it is possible that this server has not done snapshot
-		if args.SnapNo < kv.config.Num {
-			CopyMapSS(reply.DB, kv.snapshots[args.SnapNo].DB)
-			CopyMapII(reply.Uidmap, kv.snapshots[args.SnapNo].Uidmap)
-			reply.Err = OK
-			DPrintf("Update me:%d-%d\tdb-%v\nlog", kv.gid, kv.me, reply.DB)
-			kv.printLog()
-			DPrintf("\n")
-		} else {
-			DPrintf("Update me:%d-%d not snapshot yet:%v\n", kv.gid, kv.me, args)
-			reply.Err = ErrNoSnap
-		}
+		DPrintf("Update me:%d-%d not snapshot yet:%v\n", kv.gid, kv.me, args)
+		reply.Err = ErrNoSnap
 	}
+	//}
 	return nil
 }
 
@@ -336,8 +347,11 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				} else if _, brok := kv.bReCfg[logentry.ConfigNo]; brok {
 					DPrintf("do recfg me:%d-%d dupReconfig recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 				} else {
+					//kv.updateMu.Lock()
 					CopyMapSS(kv.db, kv.reconfigs[logentry.ConfigNo].DB)
 					CopyMapII(kv.uidmap, kv.reconfigs[logentry.ConfigNo].Uidmap)
+					//kv.updateMu.Unlock()
+
 					DPrintf("do recfg me:%d-%d already recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 					kv.bReCfg[logentry.ConfigNo] = true
 				}
@@ -352,13 +366,16 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				DPrintf("do snapshot me:%d-%d %v\n", kv.gid, kv.me, logentry)
 				if sn, snok := kv.snapshots[logentry.ConfigNo]; !snok {
 					DPrintf("do snapshot me:%d-%d for cfg-%d db-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, sn)
+					kv.updateMu.Lock()
 					kv.snapshots[logentry.ConfigNo] = SnapShot{kv.uidmap, kv.db}
+					kv.updateMu.Unlock()
+					// update atomic
 				} else {
 					DPrintf("do snapshot me:%d-%d already cfg-%d db-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, sn)
 				}
 			}
 
-			kv.lastLogId = insid
+			kv.lastLogId = logidx
 		}
 	}
 
@@ -617,6 +634,7 @@ func (kv *ShardKV) snapProp(curProposal Op, insid int, reply *GetReply) {
 func (kv *ShardKV) Snapshot() {
 	// send snapshot to ours and record cur state to snapshots
 	// check if already snapshot current state
+	// according to atomic
 	_, ok := kv.snapshots[kv.config.Num]
 	for !ok {
 		//DPrintf("Snapshot: %v\n", kv.snapshots)
