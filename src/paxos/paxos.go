@@ -105,6 +105,14 @@ func (px *Paxos) print() {
 
 }
 
+func (px *Paxos) Lab4print() {
+	for k, v := range px.agreem {
+		fmt.Printf("me:%d\tdecision:\tseq-%d: vsize-%v sta-%d\n", px.me, k, v.value, v.status)
+	}
+
+	fmt.Println("\n")
+}
+
 func (px *Paxos) debugPrintln(a ...interface{}) {
 	if DEBUG {
 		fmt.Println(a...)
@@ -138,7 +146,7 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	if err != nil {
 		err1 := err.(*net.OpError)
 		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
-			fmt.Printf("paxos Dial() failed: %v\n", err1)
+			//fmt.Printf("paxos Dial() failed: %v\n", err1)
 		}
 		return false
 	}

@@ -73,7 +73,7 @@ func (sm *ShardMaster) printConfigs(format string) {
 
 func (sm *ShardMaster) rpcRoutine(curProposal Op, insid int, reply *QueryReply, afterProp rpcFunc) {
 	if curProposal.Oper != "Query" || curProposal.ShardNum != -1 {
-		DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+		DPrintf("%v RPC me:%d id-%d\tGID-%d\t\n", curProposal.Oper, sm.me, insid, curProposal.GID)
 	}
 
 	sm.px.Start(insid, curProposal)
@@ -92,7 +92,7 @@ func (sm *ShardMaster) rpcRoutine(curProposal Op, insid int, reply *QueryReply, 
 				} else {
 					// wrong proposal
 					insid = sm.px.Max() + 1
-					DPrintf("%v RPC me:%d id-%d\tGID-%d\tservers-%v\n", curProposal.Oper, sm.me, insid, curProposal.GID, curProposal.Servers)
+					DPrintf("%v RPC me:%d id-%d\tGID-%d\n", curProposal.Oper, sm.me, insid, curProposal.GID)
 					sm.px.Start(insid, curProposal)
 					to = 10 * time.Millisecond
 				}
