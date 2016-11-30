@@ -193,16 +193,16 @@ func (kv *ShardKV) rmDuplicate(insid int, curLog Op) {
 
 		if _, isop := pre_v.(Op); isop {
 			//DPrintf("interpretLog: \t%d op-%v\n", pre_insid, kv.printop(pre_v.(Op)))
-			if _, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok {
+			if u, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok && (u != 0) {
 				// already true, discard this entry
-				DPrintf("rmDuplicate: \t%d duplicate:%d\n", pre_insid, pre_v.(Op).Uid)
+				DPrintf("rmDuplicate: \t%d duplicate:%d-%d\n", pre_insid, pre_v.(Op).Uid, u)
 			} else {
 				//DPrintf("rmDuplicate: \t%d notdup:%v\n", pre_insid, pre_v.(Op))
 				kv.logCache[pre_insid] = pre_v.(Op)
 				//DPrintf("\ncur shardkv:%d-%d %v\n", kv.gid, kv.me, kv.logCache)
-				if pre_v.(Op).Uid != -1 {
-					kv.uidmap[pre_v.(Op).Uid] = pre_insid
-				}
+				// if pre_v.(Op).Uid != -1 {
+				// 	kv.uidmap[pre_v.(Op).Uid] = pre_insid
+				// }
 				kv.validList[pre_insid] = true
 			}
 		} else {
@@ -300,7 +300,7 @@ func (kv *ShardKV) updateState(reply UpdateReply, shards []int) {
 func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
 	//endIdx := insid
-	if dupSeqid, dok := kv.uidmap[curLog.Uid]; dok && (dupSeqid != insid) && (curLog.Uid != -1) {
+	if dupSeqid, dok := kv.uidmap[curLog.Uid]; dok && (curLog.Uid != -1) && ((dupSeqid != insid) || (dupSeqid == -1)) {
 		DPrintf("interpretLog: duplicate-%d and skip %v v-%v uid-%v\n", dupSeqid, curLog, kv.db[curLog.Key], kv.uidmap)
 		if kv.lastLogId > dupSeqid {
 			return kv.db[curLog.Key]
@@ -324,7 +324,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 		logentry, logok := kv.logCache[logidx]
 		if logok {
 			// check if duplicate
-			if dupSeqid, dok := kv.uidmap[logentry.Uid]; dok && (dupSeqid != logidx) && (logentry.Uid != -1) {
+			if dupSeqid, dok := kv.uidmap[logentry.Uid]; dok && (dupSeqid != 0) && (logentry.Uid != -1) && ((dupSeqid != logidx) || (dupSeqid == -1)) {
 				delete(kv.logCache, logidx)
 				DPrintf("interpretLog: duplicate %d with %d and remove %v v-%v uid-%v\n", logidx, dupSeqid, kv.logCache, kv.db[curLog.Key], kv.uidmap)
 				kv.printLog()
@@ -352,7 +352,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 					CopyMapII(kv.uidmap, kv.reconfigs[logentry.ConfigNo].Uidmap)
 					//kv.updateMu.Unlock()
 
-					DPrintf("do recfg me:%d-%d already recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+					DPrintf("do recfg me:%d-%d already recfg-%d db-%v uid-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, kv.uidmap)
 					kv.bReCfg[logentry.ConfigNo] = true
 				}
 
@@ -377,7 +377,9 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 
 			kv.lastLogId = logidx
 			if logentry.Uid != -1 {
+				DPrintf("bf uid assign [%d]%d\t", logentry.Uid, kv.uidmap[logentry.Uid])
 				kv.uidmap[logentry.Uid] = logidx
+				DPrintf("af uid assign [%d]%d\n", logentry.Uid, kv.uidmap[logentry.Uid])
 			}
 		}
 	}
@@ -543,7 +545,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 func CopyMapII(dstMap map[int64]int, srcMap map[int64]int) {
 	for k, _ := range srcMap {
-		dstMap[k] = 0
+		dstMap[k] = -1
 	}
 	//DPrintf("after cpy %v\n", dstMap)
 }
