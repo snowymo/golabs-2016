@@ -77,7 +77,8 @@ type ShardKV struct {
 	minDone   int
 
 	snapshots map[int]SnapShot
-	reconfigs map[int]bool
+	reconfigs map[int]SnapShot
+	bReCfg    map[int]bool
 }
 
 func (kv *ShardKV) sameMap(map1 map[int]int64, map2 map[int]int64) bool {
@@ -121,6 +122,7 @@ func (kv *ShardKV) sameOp(op1 Op, op2 Op) bool {
 }
 
 func (kv *ShardKV) printLog() {
+	DPrintf("log size:%d\n", len(kv.logCache))
 	var keyInsids []int
 	for keyInsid, _ := range kv.logCache {
 		keyInsids = append(keyInsids, keyInsid)
@@ -232,8 +234,8 @@ func (kv *ShardKV) Update2(args *UpdateArgs, reply *UpdateReply) error {
 }
 
 func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	// kv.mu.Lock()
+	// defer kv.mu.Unlock()
 	DPrintf("enter Update RPC %d-%d\n", kv.gid, kv.me)
 	if _, uidok := kv.uidmap[args.Id]; uidok {
 		// already true, discard this entry
@@ -287,8 +289,8 @@ func (kv *ShardKV) updateState(reply UpdateReply, shards []int) {
 func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
 	//endIdx := insid
-	if dupSeqid := kv.uidmap[curLog.Uid]; (dupSeqid != insid) && (curLog.Uid != -1) {
-		DPrintf("interpretLog: duplicate and skip %v v-%v\n", curLog, kv.db[curLog.Key])
+	if dupSeqid, dok := kv.uidmap[curLog.Uid]; dok && (dupSeqid != insid) && (curLog.Uid != -1) {
+		DPrintf("interpretLog: duplicate-%d and skip %v v-%v uid-%v\n", dupSeqid, curLog, kv.db[curLog.Key], kv.uidmap)
 		if kv.lastLogId > dupSeqid {
 			return kv.db[curLog.Key]
 		}
@@ -303,50 +305,40 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// 	}
 	// }
 	DPrintf("me:%d-%d interpretLog: startIdx-%d insid-%d cur-%v\n", kv.gid, kv.me, kv.lastLogId, insid, curLog)
+	DPrintf("whole log:\t")
+	kv.printLog()
 	// step 3: figure out all the put/append from start to last same key put
 	// kv.printdb()
 	for logidx := kv.lastLogId + 1; logidx <= insid; logidx++ {
 		logentry, logok := kv.logCache[logidx]
 		if logok {
+			// check if duplicate
+			if dupSeqid, dok := kv.uidmap[logentry.Uid]; dok && (dupSeqid != logidx) && (logentry.Uid != -1) {
+				delete(kv.logCache, logidx)
+				DPrintf("interpretLog: duplicate %d with %d and remove %v v-%v uid-%v\n", logidx, dupSeqid, curLog, kv.db[curLog.Key], kv.uidmap)
+				kv.printLog()
+				continue
+			}
+
 			kv.lastLogId = insid
 			if logentry.Oper == "Put" {
 				kv.db[logentry.Key] = logentry.Value
 				DPrintf("interpretLog: put k-%v v-%v\n", logentry.Key, logentry.Value)
 			} else if logentry.Oper == "Append" {
 				kv.db[logentry.Key] += logentry.Value
-				DPrintf("interpretLog: app k-%v v-%v\n", logentry.Key, logentry.Value)
+				DPrintf("interpretLog: app k-%v v-%v equals-%v\n", logentry.Key, logentry.Value, kv.db[logentry.Key])
 			} else if logentry.Oper == "Reconfig" {
 				DPrintf("log entry:%d op-%v\n", logidx, logentry.Oper)
 				//if v, vok := kv.validList[logidx]; !vok || (vok && v) {
 				if _, rcok := kv.reconfigs[logentry.ConfigNo]; !rcok {
-					DPrintf("do recfg me:%d-%d for cfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
-					kv.reconfigs[logentry.ConfigNo] = true
-					groupUp := 0
-					for groupid, shards := range logentry.GSmap {
-						servers, sok := kv.config.Groups[groupid]
-						for sok {
-							// try each server in that replication group.
-							for _, srv := range servers {
-								args := &UpdateArgs{logentry.ConfigNo, nrand() % MAXUID}
-								var reply UpdateReply
-								DPrintf("interLog me:%d-%d before call %d\n\tresult-%v\n", kv.gid, kv.me, groupid, kv.db)
-								// kv.mu.Unlock()
-								// kv.mu.Lock()
-								ok := call(srv, "ShardKV.Update", args, &reply)
-								if ok && (reply.Err == OK) {
-									// update from the reply data
-									kv.updateState(reply, shards)
-									DPrintf("interLog me:%d-%d after update %v\n\tresult-%v\n", kv.gid, kv.me, logentry, kv.db)
-									groupUp++
-									sok = false
-									break
-								}
-							}
-							time.Sleep(50 * time.Millisecond)
-						}
-					}
+					DPrintf("do recfg me:%d-%d WRONG not yet recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+				} else if _, brok := kv.bReCfg[logentry.ConfigNo]; brok {
+					DPrintf("do recfg me:%d-%d dupReconfig recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 				} else {
-					DPrintf("do recfg me:%d-%d already cfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+					CopyMapSS(kv.db, kv.reconfigs[logentry.ConfigNo].DB)
+					CopyMapII(kv.uidmap, kv.reconfigs[logentry.ConfigNo].Uidmap)
+					DPrintf("do recfg me:%d-%d already recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
+					kv.bReCfg[logentry.ConfigNo] = true
 				}
 
 				// if groupUp != len(logentry.GSmap) {
@@ -455,11 +447,7 @@ func (kv *ShardKV) freeMem() {
 
 func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	// step 1: remove seq with duplicate ids
 	kv.rmDuplicate(insid, curProposal)
-
 	//	if curProposal.Oper == "Get" {
 	reply.Value = kv.interpretLog(insid, curProposal)
 	//	}
@@ -477,6 +465,9 @@ func (kv *ShardKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
 	// check if current cfg is updated
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	DPrintf("enter Get %d-%d %v\n", kv.gid, kv.me, args)
 	curCfg := kv.sm.Query(-1)
 	if curCfg.Num != kv.config.Num {
 		reply.Err = NOK
@@ -502,6 +493,9 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
 	// check if current cfg is updated
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	DPrintf("enter PutAppend %d-%d %v\n", kv.gid, kv.me, args)
 	curCfg := kv.sm.Query(-1)
 	if curCfg.Num != kv.config.Num {
 		reply.Err = NOK
@@ -557,6 +551,41 @@ func CopyMapSS(dstMap map[string]string, srcMap map[string]string) {
 // 	tmpReply := &GetReply{}
 // 	kv.rpcRoutine(curProposal, insid, tmpReply, kv.emptyRpc)
 // }
+func (kv *ShardKV) rfgProp(curProposal Op, insid int, reply *GetReply) {
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	// step 1: remove seq with duplicate ids
+	curRecfg := SnapShot{make(map[int64]int), make(map[string]string)}
+	for groupid, shards := range curProposal.GSmap {
+		servers, sok := kv.config.Groups[groupid]
+		for sok {
+			// try each server in that replication group.
+			for _, srv := range servers {
+				args := &UpdateArgs{curProposal.ConfigNo, nrand() % MAXUID}
+				var reply UpdateReply
+				DPrintf("rfgProp me:%d-%d before call %d\n\tresult-%v\n", kv.gid, kv.me, groupid, kv.db)
+				ok := call(srv, "ShardKV.Update", args, &reply)
+				if ok && (reply.Err == OK) {
+					// update from the reply data
+					CopyMapSSSh(curRecfg.DB, reply.DB, shards)
+					CopyMapII(curRecfg.Uidmap, reply.Uidmap)
+					DPrintf("interLog me:%d-%d after update %v\n\tresult-%v\n", kv.gid, kv.me, curProposal, curRecfg.DB)
+					sok = false
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	kv.reconfigs[curProposal.ConfigNo] = curRecfg
+	//if reply.Value == "NotUpdate" {
+	//	reply.Err = NOK
+	//} else {
+	reply.Err = OK
+	//}
+
+}
 
 func (kv *ShardKV) Reconfig2(gs map[int64][]int) {
 	// Your code here.
@@ -567,7 +596,7 @@ func (kv *ShardKV) Reconfig2(gs map[int64][]int) {
 	}
 
 	tmpReply := &GetReply{}
-	kv.rpcRoutine(curProposal, insid, tmpReply, kv.emptyRpc)
+	kv.rpcRoutine(curProposal, insid, tmpReply, kv.rfgProp)
 }
 
 func (kv *ShardKV) snapProp(curProposal Op, insid int, reply *GetReply) {
@@ -729,7 +758,8 @@ func StartServer(gid int64, shardmasters []string,
 	kv.minDone = -1
 	kv.db = make(map[string]string)
 	kv.snapshots = make(map[int]SnapShot)
-	kv.reconfigs = make(map[int]bool)
+	kv.reconfigs = make(map[int]SnapShot)
+	kv.bReCfg = make(map[int]bool)
 	// Don't call Join().
 
 	rpcs := rpc.NewServer()
