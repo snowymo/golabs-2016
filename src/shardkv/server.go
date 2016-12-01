@@ -397,7 +397,9 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 			if logentry.Uid != -1 {
 				DPrintf("bf uid assign [%d]%d\t", logentry.Uid, kv.uidWsh[key2shard(logentry.Key)][logentry.Uid])
 				//kv.uidmap[logentry.Uid] = logidx
+				kv.updateMu.Lock()
 				kv.uidWsh[key2shard(logentry.Key)][logentry.Uid] = logidx
+				kv.updateMu.Unlock()
 				//kv.U2S[logentry.Uid] = key2shard(logentry.Key)
 				DPrintf("af uid assign [%d]%d\n", logentry.Uid, kv.uidWsh[key2shard(logentry.Key)][logentry.Uid])
 			}
