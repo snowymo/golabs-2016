@@ -56,9 +56,11 @@ type UpdateArgs struct {
 }
 
 type UpdateReply struct {
-	Uidmap map[int64]int //uidmap = make(map[int64]bool)
+	//Uidmap map[int64]int //uidmap = make(map[int64]bool)
+	UidWsh map[int]map[int64]int
 	DB     map[string]string
-	Err    Err
+	//U2S    map[int64]int
+	Err Err
 }
 
 type UpSnapArgs struct {
