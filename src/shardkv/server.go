@@ -44,6 +44,7 @@ type Op struct {
 type SnapShot struct {
 	Uidmap map[int64]int //uidmap = make(map[int64]bool)
 	DB     map[string]string
+	U2S    map[int64]int //uidmap = make(map[int64]bool)
 }
 
 type KeyOpPair struct {
@@ -79,6 +80,8 @@ type ShardKV struct {
 	snapshots map[int]SnapShot
 	reconfigs map[int]SnapShot
 	bReCfg    map[int]bool
+
+	U2S map[int64]int //uidmap = make(map[int64]bool)
 
 	updateMu sync.Mutex
 }
@@ -212,32 +215,32 @@ func (kv *ShardKV) rmDuplicate(insid int, curLog Op) {
 	}
 }
 
-func (kv *ShardKV) Update2(args *UpdateArgs, reply *UpdateReply) error {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+// func (kv *ShardKV) Update2(args *UpdateArgs, reply *UpdateReply) error {
+// 	kv.mu.Lock()
+// 	defer kv.mu.Unlock()
 
-	if _, uidok := kv.uidmap[args.Id]; uidok {
-		// already true, discard this entry
-		DPrintf("Update me:%d-%d duplicate:%v\n", kv.gid, kv.me, args)
-	} else {
-		DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
-		reply.DB = make(map[string]string)
-		reply.Uidmap = make(map[int64]int)
-		// it is possible that this server has not done snapshot
-		if args.SnapNo >= kv.config.Num {
-			DPrintf("Update me:%d-%d not snapshot yet and do tick:%v\n", kv.gid, kv.me, args)
-			kv.Snapshot()
-			kv.updateCfg(kv.sm.Query(-1))
-		}
-		CopyMapSS(reply.DB, kv.snapshots[args.SnapNo].DB)
-		CopyMapII(reply.Uidmap, kv.snapshots[args.SnapNo].Uidmap)
-		reply.Err = OK
-		DPrintf("Update me:%d-%d\tdb-%v\nlogs:", kv.gid, kv.me, reply.DB)
-		kv.printLog()
-		DPrintf("\n")
-	}
-	return nil
-}
+// 	if _, uidok := kv.uidmap[args.Id]; uidok {
+// 		// already true, discard this entry
+// 		DPrintf("Update me:%d-%d duplicate:%v\n", kv.gid, kv.me, args)
+// 	} else {
+// 		DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
+// 		reply.DB = make(map[string]string)
+// 		reply.Uidmap = make(map[int64]int)
+// 		// it is possible that this server has not done snapshot
+// 		if args.SnapNo >= kv.config.Num {
+// 			DPrintf("Update me:%d-%d not snapshot yet and do tick:%v\n", kv.gid, kv.me, args)
+// 			kv.Snapshot()
+// 			kv.updateCfg(kv.sm.Query(-1))
+// 		}
+// 		CopyMapSS(reply.DB, kv.snapshots[args.SnapNo].DB)
+// 		CopyMapII(reply.Uidmap, kv.snapshots[args.SnapNo].Uidmap)
+// 		reply.Err = OK
+// 		DPrintf("Update me:%d-%d\tdb-%v\nlogs:", kv.gid, kv.me, reply.DB)
+// 		kv.printLog()
+// 		DPrintf("\n")
+// 	}
+// 	return nil
+// }
 
 func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
 	// kv.mu.Lock()
@@ -250,6 +253,7 @@ func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
 	//DPrintf("Update me:%d-%d not dup:%v\n", kv.gid, kv.me, args)
 	reply.DB = make(map[string]string)
 	reply.Uidmap = make(map[int64]int)
+	reply.U2S = make(map[int64]int)
 	// it is possible that this server has not done snapshot
 	// according to atomic
 	kv.updateMu.Lock()
@@ -258,6 +262,7 @@ func (kv *ShardKV) Update(args *UpdateArgs, reply *UpdateReply) error {
 
 		CopyMapSS(reply.DB, sn.DB)
 		CopyMapII(reply.Uidmap, sn.Uidmap)
+		CopyMapII(reply.U2S, sn.U2S)
 
 		reply.Err = OK
 		DPrintf("Update me:%d-%d\tdb-%v\nlog", kv.gid, kv.me, reply.DB)
@@ -292,10 +297,10 @@ func CopyMapSSSh(dstMap map[string]string, srcMap map[string]string, shards []in
 	DPrintf("\n")
 }
 
-func (kv *ShardKV) updateState(reply UpdateReply, shards []int) {
-	CopyMapSSSh(kv.db, reply.DB, shards)
-	CopyMapII(kv.uidmap, reply.Uidmap)
-}
+// func (kv *ShardKV) updateState(reply UpdateReply, shards []int) {
+// 	CopyMapSSSh(kv.db, reply.DB, shards)
+// 	CopyMapII(kv.uidmap, reply.Uidmap)
+// }
 
 func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 	// step 2: interpret the log before that point to make sure its key/value db reflects all recent put()s
@@ -347,9 +352,11 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				} else if _, brok := kv.bReCfg[logentry.ConfigNo]; brok {
 					DPrintf("do recfg me:%d-%d dupReconfig recfg-%d db-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db)
 				} else {
+					DPrintf("do recfg me:%d-%d before recfg-%d db-%v uid-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, kv.uidmap)
 					//kv.updateMu.Lock()
 					CopyMapSS(kv.db, kv.reconfigs[logentry.ConfigNo].DB)
 					CopyMapII(kv.uidmap, kv.reconfigs[logentry.ConfigNo].Uidmap)
+					CopyMapII(kv.U2S, kv.reconfigs[logentry.ConfigNo].U2S)
 					//kv.updateMu.Unlock()
 
 					DPrintf("do recfg me:%d-%d already recfg-%d db-%v uid-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, kv.uidmap)
@@ -365,10 +372,11 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 				// apply current state to that snapshot
 				DPrintf("do snapshot me:%d-%d %v\n", kv.gid, kv.me, logentry)
 				if sn, snok := kv.snapshots[logentry.ConfigNo]; !snok {
-					DPrintf("do snapshot me:%d-%d for cfg-%d db-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, sn)
+					DPrintf("do snapshot me:%d-%d for cfg-%d db-%v uid-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, kv.uidmap, sn)
 					kv.updateMu.Lock()
-					kv.snapshots[logentry.ConfigNo] = SnapShot{kv.uidmap, kv.db}
+					kv.snapshots[logentry.ConfigNo] = SnapShot{kv.uidmap, kv.db, kv.U2S}
 					kv.updateMu.Unlock()
+					DPrintf("do snapshot me:%d-%d after cfg-%d sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.snapshots[logentry.ConfigNo])
 					// update atomic
 				} else {
 					DPrintf("do snapshot me:%d-%d already cfg-%d db-%v sn-%v\n", kv.gid, kv.me, logentry.ConfigNo, kv.db, sn)
@@ -379,6 +387,7 @@ func (kv *ShardKV) interpretLog(insid int, curLog Op) string {
 			if logentry.Uid != -1 {
 				DPrintf("bf uid assign [%d]%d\t", logentry.Uid, kv.uidmap[logentry.Uid])
 				kv.uidmap[logentry.Uid] = logidx
+				kv.U2S[logentry.Uid] = key2shard(logentry.Key)
 				DPrintf("af uid assign [%d]%d\n", logentry.Uid, kv.uidmap[logentry.Uid])
 			}
 		}
@@ -580,12 +589,35 @@ func CopyMapSS(dstMap map[string]string, srcMap map[string]string) {
 // 	tmpReply := &GetReply{}
 // 	kv.rpcRoutine(curProposal, insid, tmpReply, kv.emptyRpc)
 // }
+
+func contains(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+func CopyMapIISh(dstMap map[int64]int, srcMap map[int64]int, shards []int, u2sh map[int64]int) {
+	for k, _ := range srcMap {
+		sh := u2sh[k]
+		if contains(shards, sh) {
+			if _, ok := dstMap[k]; !ok {
+				// if not exist means it is not the original uid source, then assign -1
+				dstMap[k] = -1
+			}
+		}
+	}
+	//DPrintf("after cpy %v\n", dstMap)
+}
+
 func (kv *ShardKV) rfgProp(curProposal Op, insid int, reply *GetReply) {
 
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	// step 1: remove seq with duplicate ids
-	curRecfg := SnapShot{make(map[int64]int), make(map[string]string)}
+	curRecfg := SnapShot{make(map[int64]int), make(map[string]string), make(map[int64]int)}
 	for groupid, shards := range curProposal.GSmap {
 		servers, sok := kv.config.Groups[groupid]
 		for sok {
@@ -598,7 +630,7 @@ func (kv *ShardKV) rfgProp(curProposal Op, insid int, reply *GetReply) {
 				if ok && (reply.Err == OK) {
 					// update from the reply data
 					CopyMapSSSh(curRecfg.DB, reply.DB, shards)
-					CopyMapII(curRecfg.Uidmap, reply.Uidmap)
+					CopyMapIISh(curRecfg.Uidmap, reply.Uidmap, shards, reply.U2S)
 					DPrintf("interLog me:%d-%d after update %v\n\tresult-%v\n", kv.gid, kv.me, curProposal, curRecfg.DB)
 					sok = false
 					break
@@ -800,6 +832,7 @@ func StartServer(gid int64, shardmasters []string,
 	kv.snapshots = make(map[int]SnapShot)
 	kv.reconfigs = make(map[int]SnapShot)
 	kv.bReCfg = make(map[int]bool)
+	kv.U2S = make(map[int64]int)
 	// Don't call Join().
 
 	rpcs := rpc.NewServer()

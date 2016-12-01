@@ -58,6 +58,7 @@ type UpdateArgs struct {
 type UpdateReply struct {
 	Uidmap map[int64]int //uidmap = make(map[int64]bool)
 	DB     map[string]string
+	U2S    map[int64]int
 	Err    Err
 }
 
