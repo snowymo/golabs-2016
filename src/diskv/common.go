@@ -13,6 +13,8 @@ const (
 	OK            = "OK"
 	ErrNoKey      = "ErrNoKey"
 	ErrWrongGroup = "ErrWrongGroup"
+	ErrNoSnap     = "ErrNoSnap"
+	NOK           = "NOK"
 )
 
 type Err string
@@ -24,7 +26,8 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-
+	Id    int64 // unique id
+	Shard int
 }
 
 type PutAppendReply struct {
@@ -34,6 +37,8 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	Id    int64 // unique id
+	Shard int
 }
 
 type GetReply struct {
@@ -41,3 +46,17 @@ type GetReply struct {
 	Value string
 }
 
+type UpdateArgs struct {
+	SnapNo int
+	Id     int64 // unique id
+}
+
+type UpdateReply struct {
+	//Uidmap map[int64]int //uidmap = make(map[int64]bool)
+	UidWsh map[int]map[int64]int
+	DB     map[string]string
+	//U2S    map[int64]int
+	Err Err
+}
+
+const MAXUID = 4294967296

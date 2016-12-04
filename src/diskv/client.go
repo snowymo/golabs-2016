@@ -89,6 +89,7 @@ func (ck *Clerk) Get(key string) string {
 	// You'll have to modify Get().
 
 	for {
+		uid := nrand() % MAXUID
 		shard := key2shard(key)
 
 		gid := ck.config.Shards[shard]
@@ -98,8 +99,7 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &GetArgs{}
-				args.Key = key
+				args := &GetArgs{key, uid, shard}
 				var reply GetReply
 				ok := call(srv, "DisKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
@@ -124,7 +124,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	defer ck.mu.Unlock()
 
 	// You'll have to modify PutAppend().
-
+	uid := nrand() % MAXUID
 	for {
 		shard := key2shard(key)
 
@@ -135,10 +135,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
-				args := &PutAppendArgs{}
-				args.Key = key
-				args.Value = value
-				args.Op = op
+				args := &PutAppendArgs{key, value, op, uid, shard}
 				var reply PutAppendReply
 				ok := call(srv, "DisKV.PutAppend", args, &reply)
 				if ok && reply.Err == OK {
