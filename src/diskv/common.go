@@ -59,8 +59,22 @@ type UpdateReply struct {
 	Err Err
 }
 
+type LoadDiskArgs struct {
+	Id int64 // unique id
+}
+
+type LoadDiskReply struct {
+	//Uidmap map[int64]int //uidmap = make(map[int64]bool)
+	UidWsh    map[int]map[int64]int
+	DB        map[string]string
+	LogCache  map[int]Op
+	LastLogId int
+	Err       Err
+}
+
 const MAXUID = 4294967296
 
 const LOGSHARD = 11
 const UIDSHARD = 12
 const LOGFILE = "logidx"
+const PAXOSSHARD = 22
