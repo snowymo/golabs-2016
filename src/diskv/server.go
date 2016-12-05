@@ -109,6 +109,13 @@ func (kv *DisKV) printLog() {
 }
 
 func (kv *DisKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterProp rpcFunc) {
+	// check if it just come back from crash
+	kv.checkCrash()
+
+	if insid <= kv.lastLogId {
+		insid = kv.lastLogId + 1
+	}
+
 	DPrintf("%v RPC me:%d-%d id-%d\t%v\n", curProposal.Oper, kv.gid, kv.me, insid, curProposal)
 	kv.px.Start(insid, curProposal)
 
@@ -165,6 +172,7 @@ func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 				// already true, discard this entry
 				DPrintf("rmDuplicate: \t%d duplicate:%d-%d\n", pre_insid, pre_v.(Op).Uid, u)
 			} else {
+				DPrintf("rmDuplicate: \t%d notdup:%d-%d\n", pre_insid, pre_v.(Op).Uid, u)
 				kv.logCache[pre_insid] = pre_v.(Op)
 				kv.validList[pre_insid] = true
 			}
@@ -240,6 +248,7 @@ func (kv *DisKV) saveToDisk(logentry Op, value string, logidx int) {
 	kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(logidx))
 	// save the new uid map
 	kv.filePut(UIDSHARD+key2shard(logentry.Key), strconv.FormatInt(logentry.Uid, 10), strconv.Itoa(logidx))
+	// save the max paxos number
 }
 
 func (kv *DisKV) interpretLog(insid int, curLog Op) string {
@@ -374,12 +383,14 @@ func (kv *DisKV) freeMem() {
 }
 
 func (kv *DisKV) checkCrash() {
+	DPrintf("enter checkCrash %d\n", kv.lastLogId)
 	if kv.lastLogId == -1 { // might be it is the first time, which is fine
 		// TODO load from disk
-		for i := 0; i < UIDSHARD; i++ {
+		for i := 0; i < UIDSHARD+10; i++ {
 			m := kv.fileReadShard(i)
+			DPrintf("load from disk shard-%d map-%v\n", i, m)
 			if len(m) == 0 {
-				return
+				continue
 			}
 			if i < LOGSHARD {
 				CopyMapSS(kv.db, m)
@@ -389,14 +400,14 @@ func (kv *DisKV) checkCrash() {
 			} else if i > LOGSHARD {
 				CopyUidMap(kv.uidWsh, m, i-UIDSHARD)
 			}
+			DPrintf("after loading db-%v logid-%d uid-%v\n", kv.db, kv.lastLogId, kv.uidWsh)
 		}
 	}
 }
 
 func (kv *DisKV) emptyRpc(curProposal Op, insid int, reply *GetReply) {
 
-	// check if it just come back from crash
-	kv.checkCrash()
+	DPrintf("insid:%d\n", insid)
 	kv.rmDuplicate(insid, curProposal)
 	reply.Value = kv.interpretLog(insid, curProposal)
 	kv.CheckMinDone(insid, curProposal)
@@ -636,6 +647,7 @@ func (kv *DisKV) Get(args *GetArgs, reply *GetReply) error {
 	// propose
 	curProposal := Op{"Get", args.Key, "", kv.config.Num, nil, args.Id}
 	insid := kv.px.Max() + 1
+
 	kv.rpcRoutine(curProposal, insid, reply, kv.emptyRpc)
 	return nil
 }
@@ -663,6 +675,10 @@ func (kv *DisKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// propose
 	curProposal := Op{args.Op, args.Key, args.Value, kv.config.Num, nil, args.Id}
 	insid := kv.px.Max() + 1
+	// if insid <= kv.lastLogId {
+	// 	insid = kv.lastLogId + 1
+	// }
+	// DPrintf("insid:%d\n", insid)
 	tmpReply := &GetReply{}
 	kv.rpcRoutine(curProposal, insid, tmpReply, kv.emptyRpc)
 	reply.Err = tmpReply.Err
