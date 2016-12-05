@@ -60,3 +60,7 @@ type UpdateReply struct {
 }
 
 const MAXUID = 4294967296
+
+const LOGSHARD = 11
+const UIDSHARD = 12
+const LOGFILE = "logidx"
