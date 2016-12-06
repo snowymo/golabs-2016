@@ -1017,6 +1017,7 @@ func doConcurrentCrash(t *testing.T, unreliable bool) {
 	}
 
 	for i := 0; i < 3; i++ {
+		DPrintf("tc.kill1(0, %d, nodel)\n", i%3)
 		tc.kill1(0, i%3, false)
 		time.Sleep(1000 * time.Millisecond)
 		ck.Get(k1)
@@ -1029,6 +1030,7 @@ func doConcurrentCrash(t *testing.T, unreliable bool) {
 	}
 
 	for i := 0; i < 3; i++ {
+		DPrintf("tc.kill1(0, %d, delete)\n", i%3)
 		tc.kill1(0, i%3, true)
 		time.Sleep(1000 * time.Millisecond)
 		ck.Get(k1)
@@ -1056,6 +1058,7 @@ func doConcurrentCrash(t *testing.T, unreliable bool) {
 	checkAppends(t, vx, counts)
 
 	for i := 0; i < 3; i++ {
+		DPrintf("tc.kill1(0, %d, nodel)\n", i%3)
 		tc.kill1(0, i, false)
 		if ck.Get(k1) != vx {
 			t.Fatalf("mismatch")

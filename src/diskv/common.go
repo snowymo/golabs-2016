@@ -60,7 +60,12 @@ type UpdateReply struct {
 }
 
 type LoadDiskArgs struct {
-	Id int64 // unique id
+	UidWsh    map[int]map[int64]int
+	DB        map[string]string
+	LastLogId int
+	Me        int
+	Disk      map[int]map[string]string
+	Id        int64 // unique id
 }
 
 type LoadDiskReply struct {
@@ -69,6 +74,7 @@ type LoadDiskReply struct {
 	DB        map[string]string
 	LogCache  map[int]Op
 	LastLogId int
+	Disk      map[int]map[string]string
 	Err       Err
 }
 

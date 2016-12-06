@@ -119,9 +119,9 @@ func (kv *DisKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterPro
 
 	DPrintf("%v RPC me:%d-%d id-%d\t%v\n", curProposal.Oper, kv.gid, kv.me, insid, curProposal)
 	kv.px.Start(insid, curProposal)
-	if (insid - kv.lastLogId) > 5 {
-		kv.px.Lab4print()
-	}
+	//if (insid - kv.lastLogId) > 5 {
+	kv.px.Lab4print()
+	//}
 
 	to := 10 * time.Millisecond
 	for {
@@ -154,7 +154,7 @@ func (kv *DisKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterPro
 
 func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 	// step 1: remove seq with duplicate ids
-	DPrintf("enter rmDuplicate for %d to %d-%v\n", kv.lastLogId, insid, curLog)
+	DPrintf("enter rmDuplicate %d-%d for %d to %d-%v\n", kv.gid, kv.me, kv.lastLogId, insid, curLog)
 	to := 10 * time.Millisecond
 	for pre_insid := kv.lastLogId + 1; pre_insid <= insid; pre_insid++ {
 		//DPrintf("interpretLog %d: call Status\t%d\n", kv.me, pre_insid)
@@ -175,14 +175,14 @@ func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 			//if u, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok && (u != 0) {
 			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) {
 				// already true, discard this entry
-				DPrintf("rmDuplicate: \t%d duplicate:%d-%d\n", pre_insid, pre_v.(Op).Uid, u)
+				DPrintf("rmDuplicate %d-%d: \t%d duplicate:%d-%d\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 			} else {
-				DPrintf("rmDuplicate: \t%d notdup:%d-%d\n", pre_insid, pre_v.(Op).Uid, u)
+				DPrintf("rmDuplicate %d-%d: \t%d notdup:%d-%d\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 				kv.logCache[pre_insid] = pre_v.(Op)
 				kv.validList[pre_insid] = true
 			}
 		} else {
-			DPrintf("rmDuplicate: \t%d not GET/PUT/APP op-%v\n", pre_insid, pre_v)
+			DPrintf("rmDuplicate %d-%d: \t%d not GET/PUT/APP op-%v\n", kv.gid, kv.me, pre_insid, pre_v)
 			kv.validList[pre_insid] = true
 		}
 	}
@@ -247,15 +247,25 @@ func (kv *DisKV) interpretSnap(logentry Op) {
 
 func (kv *DisKV) saveToDisk(logentry Op, value string, logidx int) {
 	// save the new k/v
+	st, err := kv.fileGet(LOGSHARD, LOGFILE)
+	DPrintf("test saveToDisk me:%d-%d dir-%v diskIdx-%v err-%v logidx-%d\n", kv.gid, kv.me, kv.dir, st, err, logidx)
 
-	err := kv.filePut(key2shard(logentry.Key), logentry.Key, value)
-	DPrintf("saveToDisk me:%d-%d err-%v\n", kv.gid, kv.me, err)
-	// save the latest logidx
-	kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(logidx))
-	// save the new uid map
-	kv.filePut(UIDSHARD+key2shard(logentry.Key), strconv.FormatInt(logentry.Uid, 10), strconv.Itoa(logidx))
-	// save the paxos
-	//kv.filePut(PAXOSSHARD, strconv.Itoa(logidx), enc(kv.logCache[logidx]))
+	it, _ := strconv.ParseInt(st, 10, 32)
+	if err != nil {
+		it = -1
+	}
+	if int(it) < logidx {
+		err := kv.filePut(key2shard(logentry.Key), logentry.Key, value)
+		DPrintf("saveToDisk me:%d-%d logidx-%d err-%v\n", kv.gid, kv.me, logidx, err)
+		// save the latest logidx
+		kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(logidx))
+
+		// save the new uid map
+		kv.filePut(UIDSHARD+key2shard(logentry.Key), strconv.FormatInt(logentry.Uid, 10), strconv.Itoa(logidx))
+		// save the paxos
+		//kv.filePut(PAXOSSHARD, strconv.Itoa(logidx), enc(kv.logCache[logidx]))
+	}
+
 }
 
 func (kv *DisKV) interpretLog(insid int, curLog Op) string {
@@ -267,8 +277,8 @@ func (kv *DisKV) interpretLog(insid int, curLog Op) string {
 			return kv.db[curLog.Key]
 		}
 	}
-	DPrintf("me:%d-%d interpretLog: startIdx-%d insid-%d cur-%v\nwhole log:\t", kv.gid, kv.me, kv.lastLogId, insid, curLog)
-	kv.printLog()
+	//DPrintf("me:%d-%d interpretLog: startIdx-%d insid-%d cur-%v\nwhole log:\t", kv.gid, kv.me, kv.lastLogId, insid, curLog)
+	//kv.printLog()
 
 	// step 3: figure out all the put/append from start to last same key put
 	for logidx := kv.lastLogId + 1; logidx <= insid; logidx++ {
@@ -340,6 +350,7 @@ func (kv *DisKV) updateMinDone() {
 		//DPrintf("update minDone:%d\n", kv.minDone)
 	}
 	kv.px.Done(kv.minDone)
+	DPrintf("me:%d-%d call Done %d\n", kv.gid, kv.me, kv.minDone)
 }
 
 func (kv *DisKV) CheckMinDone(insid int, curProposal Op) {
@@ -392,16 +403,22 @@ func (kv *DisKV) freeMem() {
 }
 
 func (kv *DisKV) loadFromDisk(reply *LoadDiskReply) int {
-	kv.loadMu.Lock()
-	defer kv.loadMu.Unlock()
 	reply.LastLogId = -1
 	reply.DB = make(map[string]string)
 	reply.UidWsh = make(map[int]map[int64]int)
 	reply.LogCache = make(map[int]Op, 0)
+	reply.Disk = make(map[int]map[string]string)
+
+	kv.loadMu.Lock()
+	defer kv.loadMu.Unlock()
+
 	lens := 0
 	for i := 0; i < UIDSHARD+10; i++ {
 		m := kv.fileReadShard(i)
 		//DPrintf("load from disk shard-%d map-%v\n", i, m)
+		reply.Disk[i] = make(map[string]string)
+		CopyMapSS(reply.Disk[i], m)
+
 		lens += len(m)
 		if len(m) == 0 {
 			continue
@@ -409,16 +426,21 @@ func (kv *DisKV) loadFromDisk(reply *LoadDiskReply) int {
 		if i < LOGSHARD {
 			CopyMapSS(reply.DB, m)
 		} else if i == LOGSHARD {
-			valu, _ := strconv.ParseInt(m[LOGFILE], 10, 32)
-			reply.LastLogId = int(valu)
+			DPrintf("load from disk shard-%d map-%v\n", i, m)
+			if v, ok := m[LOGFILE]; ok {
+				valu, _ := strconv.ParseInt(v, 10, 32)
+				reply.LastLogId = int(valu)
+			}
+
 		} else if i < PAXOSSHARD {
 			CopyUidMap(reply.UidWsh, m, i-UIDSHARD)
 		}
 		// else {
 		// 	CopyLogCache(reply.LogCache, m)
 		// }
-		DPrintf("after loading %v\n", reply)
+		DPrintf("loadFromDisk %d-%d af loading %v\n", kv.gid, kv.me, reply)
 	}
+	kv.px.Lab4print()
 	return lens
 }
 
@@ -449,42 +471,47 @@ func (kv *DisKV) repropose() {
 
 func (kv *DisKV) checkCrash() {
 	DPrintf("enter checkCrash %d\n", kv.lastLogId)
+	fromDisk := &LoadDiskReply{}
+	// load from disk
+	lens := kv.loadFromDisk(fromDisk)
+
 	if kv.lastLogId == -1 { // might be just crashed or the first time, which is fine
-		// load from disk
-		reply := &LoadDiskReply{}
-		kv.loadFromDisk(reply)
-		CopyMapSS(kv.db, reply.DB)
-		kv.lastLogId = reply.LastLogId
-		CopyMapMM(kv.uidWsh, reply.UidWsh)
-		//CopyMapIO(kv.logCache, reply.LogCache)
-		kv.repropose()
+		CopyMapSS(kv.db, fromDisk.DB)
+		kv.lastLogId = fromDisk.LastLogId
+		CopyMapMM(kv.uidWsh, fromDisk.UidWsh)
+		//kv.repropose()
 
 		//if lens == 0 {
 		// might be just clean the disk or the first time, ask other replicas in the group
-		servers, sok := kv.config.Groups[kv.gid]
-		if sok {
-			// try each server in that replication group.
-			for _, srv := range servers {
-				//if servers != kv.me {
-				args := &LoadDiskArgs{nrand() % MAXUID}
-				var reply LoadDiskReply
-				ok := call(srv, "DisKV.LoadDisk", args, &reply)
-				DPrintf("checkCrash me:%d-%d after call LoadDisk %v lastId-%d\n\tresult-%v\n", kv.gid, kv.me, srv, kv.lastLogId, kv.db)
-				//}
-				if ok && reply.Err == OK {
-					if reply.LastLogId > 1 && ((reply.LastLogId - kv.lastLogId) > 1) {
-						CopyMapSS(kv.db, reply.DB)
-						kv.lastLogId = reply.LastLogId
-						CopyMapMM(kv.uidWsh, reply.UidWsh)
-						//CopyMapIO(kv.logCache, reply.LogCache)
-					}
-					// if reply.LastLogId > -1 {
-					// 	break
-					// }
-				}
-			}
-		}
 		//}
+	}
+	servers, sok := kv.config.Groups[kv.gid]
+	if sok {
+		// try each server in that replication group.
+		for _, srv := range servers {
+			//if servers != kv.me {
+			args := &LoadDiskArgs{kv.uidWsh, kv.db, kv.lastLogId, kv.me, fromDisk.Disk, nrand() % MAXUID}
+			reply := &LoadDiskReply{}
+			ok := call(srv, "DisKV.LoadDisk", args, &reply)
+			DPrintf("checkCrash me:%d-%d after call LoadDisk %v lastId-%d\n\tresult-%v\n", kv.gid, kv.me, srv, kv.lastLogId, reply)
+			//}
+			if ok && reply.Err == OK {
+				if (reply.LastLogId > 1) && (lens == 0) {
+					CopyMapSS(kv.db, reply.DB)
+					kv.lastLogId = reply.LastLogId
+					CopyMapMM(kv.uidWsh, reply.UidWsh)
+					for k, v := range reply.Disk {
+						kv.fileReplaceShard(k, v)
+					}
+
+					//CopyMapIO(kv.logCache, reply.LogCache)
+				}
+				// if reply.LastLogId > -1 {
+				// 	break
+				// }
+			}
+			DPrintf("checkCrash me:%d-%d af assignment lastId-%d\n\tresult-%v\n", kv.gid, kv.me, kv.lastLogId, kv.db)
+		}
 	}
 }
 
@@ -758,6 +785,7 @@ func (kv *DisKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// propose
 	curProposal := Op{args.Op, args.Key, args.Value, kv.config.Num, nil, args.Id}
 	insid := kv.px.Max() + 1
+
 	DPrintf("after Max insid:%d\n", insid)
 	// if insid <= kv.lastLogId {
 	// 	insid = kv.lastLogId + 1
@@ -773,8 +801,27 @@ func (kv *DisKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 func (kv *DisKV) LoadDisk(args *LoadDiskArgs, reply *LoadDiskReply) error {
 	// kv.loadMu.Lock()
 	// defer kv.loadMu.Unlock()
-	kv.loadFromDisk(reply)
+	DPrintf("enter LoadDisk %d-%d logid-%d\n", kv.gid, kv.me, kv.lastLogId)
+	reply.LastLogId = -1
 
+	if args.LastLogId > kv.lastLogId {
+		// load args to self
+		DPrintf("argsme:%d\tme:%d\n", args.Me, kv.me)
+		//kv.mu.Lock()
+		// CopyMapSS(kv.db, args.DB)
+		// CopyMapMM(kv.uidWsh, args.UidWsh)
+		// kv.lastLogId = args.LastLogId
+		kv.loadMu.Lock()
+		for k, v := range args.Disk {
+			kv.fileReplaceShard(k, v)
+		}
+		kv.loadMu.Unlock()
+
+		//kv.mu.Unlock()
+		//CopyMapIO(kv.logCache, reply.LogCache)
+	} else {
+		kv.loadFromDisk(reply)
+	}
 	reply.Err = OK
 	return nil
 }
@@ -792,10 +839,11 @@ func (kv *DisKV) tick() {
 		for kv.sameShard(tmpCfg.Shards, kv.config.Shards) && (tmpCfg.Num != curCfg.Num) {
 			kv.updateCfg(tmpCfg)
 			tmpCfg = kv.sm.Query(kv.config.Num + 1)
+			//DPrintf("me%d-%d\tneed to updateCfg: %d\t%v\n", kv.gid, kv.me, curCfg.Num, curCfg.Shards)
 		}
 		isChanged := kv.checkGG(tmpCfg)
 		kv.updateCfg(tmpCfg)
-		DPrintf("me:%d-%d\tafter change config to %v\n\n", kv.gid, kv.me, kv.config.Shards)
+		DPrintf("me:%d-%d\tafter change config to %v isChanged-%v\n\n", kv.gid, kv.me, kv.config.Shards, isChanged)
 		if isChanged {
 			break
 		}
