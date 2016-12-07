@@ -28,6 +28,7 @@ type PutAppendArgs struct {
 	// otherwise RPC will break.
 	Id    int64 // unique id
 	Shard int
+	Srv   string
 }
 
 type PutAppendReply struct {
@@ -39,6 +40,7 @@ type GetArgs struct {
 	// You'll have to add definitions here.
 	Id    int64 // unique id
 	Shard int
+	Srv   string
 }
 
 type GetReply struct {
@@ -56,7 +58,8 @@ type UpdateReply struct {
 	UidWsh map[int]map[int64]int
 	DB     map[string]string
 	//U2S    map[int64]int
-	Err Err
+	Disk map[int]map[string]string
+	Err  Err
 }
 
 type LoadDiskArgs struct {
@@ -75,6 +78,29 @@ type LoadDiskReply struct {
 	LogCache  map[int]Op
 	LastLogId int
 	Disk      map[int]map[string]string
+	Err       Err
+}
+
+type SaveDiskArgs struct {
+	Logentry Op
+	Value    string
+	Logidx   int
+	Id       int64 // unique id
+}
+
+type SaveDiskReply struct {
+	LastLogId int
+	Err       Err
+}
+
+type ReplaceDiskArgs struct {
+	LastLogId int
+	Disk      map[int]map[string]string
+	Id        int64 // unique id
+}
+
+type ReplaceDiskReply struct {
+	LastLogId int
 	Err       Err
 }
 
