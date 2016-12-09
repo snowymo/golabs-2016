@@ -118,11 +118,13 @@ func (kv *DisKV) printLog() {
 func (kv *DisKV) rpcRoutine(curProposal Op, insid int, reply *GetReply, afterProp rpcFunc) {
 	DPrintf("enter%v RPC me:%d-%d id-%d\n", curProposal.Oper, kv.gid, kv.me, insid)
 	kv.initMu.Lock()
-	defer kv.initMu.Unlock()
 	DPrintf("acquire lock me:%d-%d lastLogId:%d kv.bInit:%v\n", kv.gid, kv.me, kv.lastLogId, kv.bInit)
 	if !kv.bInit {
 		reply.Err = NOK
+		kv.initMu.Unlock()
 		return
+	} else {
+		kv.initMu.Unlock()
 	}
 
 	fromDisk := &LoadDiskReply{}
@@ -322,7 +324,20 @@ func (kv *DisKV) saveToDisk(logentry Op, value string, logidx int) {
 }
 
 func (kv *DisKV) SaveDisk(args *SaveDiskArgs, reply *SaveDiskReply) error {
+	if args.Me == kv.me {
+		reply.Err = OK
+		DPrintf("%d-%d self\n", kv.gid, kv.me)
+		return nil
+	}
+	DPrintf("%d-%d acquire init lock\n", kv.gid, kv.me)
 	// save the new k/v
+	kv.initMu.Lock()
+	defer kv.initMu.Unlock()
+	if kv.bInit == false {
+		reply.Err = NOK
+		return nil
+	}
+
 	st, err := kv.fileGet(LOGSHARD, LOGFILE)
 	DPrintf("test SaveDisk me:%d-%d dir-%v diskIdx-%v err-%v logidx-%d\n", kv.gid, kv.me, kv.dir, st, err, args.Logidx)
 
@@ -355,7 +370,7 @@ func (kv *DisKV) saveReconfig() {
 	kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(kv.lastLogId))
 
 	// if st2, err2 := kv.fileGet(LOGSHARD, LOGFILE); err2 == nil {
-	// 	DPrintf("saveToDisk me:%d-%d logidx-%v err-%v\n", kv.gid, kv.me, st2, err2)
+
 	// }
 	// save the  uid map
 	for k, uidmap := range kv.uidWsh {
@@ -627,23 +642,23 @@ func (kv *DisKV) saveToMajority(logentry Op, value string, logidx int) {
 	servers, sok := kv.config.Groups[kv.gid]
 	checkSrv := make(map[int]bool)
 	if sok {
-		ret := 1
+		ret := 0
 		for ret <= (len(servers) / 2) { // because it is unreliable
 			// try each server in that replication group.
 			for i, srv := range servers {
-				if _, err := checkSrv[i]; !err && (srv != kv.srv) {
+				if _, err := checkSrv[i]; !err {
 					DPrintf("saveToMajority me:%d-%d bf call SaveDisk %v lastId-%d\n", kv.gid, kv.me, srv, kv.lastLogId)
 					//if servers != kv.me {
-					args := &SaveDiskArgs{logentry, value, logidx, nrand() % MAXUID}
+					args := &SaveDiskArgs{logentry, value, logidx, kv.me, nrand() % MAXUID}
 					reply := &SaveDiskReply{}
 					//DPrintf("call in checkCrash:%d\t", loopidx)
 					ok := call(srv, "DisKV.SaveDisk", args, &reply)
 
 					//}
-					if ok {
+					if ok && (reply.Err == OK) {
 						ret++
 						checkSrv[i] = true
-						DPrintf("saveToMajority me:%d-%d after call SaveDisk %v lastId-%d err-%v\tresult-%d\n", kv.gid, kv.me, srv, kv.lastLogId, ok, reply.LastLogId)
+						DPrintf("saveToMajority me:%d-%d after call SaveDisk %v lastId-%d err-%v\ret-%d\t%v\n", kv.gid, kv.me, srv, kv.lastLogId, ok, ret, checkSrv)
 						break
 					}
 				}

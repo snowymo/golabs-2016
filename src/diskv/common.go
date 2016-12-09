@@ -85,6 +85,7 @@ type SaveDiskArgs struct {
 	Logentry Op
 	Value    string
 	Logidx   int
+	Me       int
 	Id       int64 // unique id
 }
 
