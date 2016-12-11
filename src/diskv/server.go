@@ -207,7 +207,7 @@ func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 
 		if _, isop := pre_v.(Op); isop {
 			//if u, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok && (u != 0) {
-			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) && (u != pre_insid) {
+			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) {
 				// already true, discard this entry
 				DPrintf("rmDuplicate %d-%d: \t%d duplicate:%d-%v\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 			} else {
