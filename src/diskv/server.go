@@ -207,11 +207,11 @@ func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 
 		if _, isop := pre_v.(Op); isop {
 			//if u, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok && (u != 0) {
-			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) {
+			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) && (u != pre_insid) {
 				// already true, discard this entry
-				DPrintf("rmDuplicate %d-%d: \t%d duplicate:%d-%d\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
+				DPrintf("rmDuplicate %d-%d: \t%d duplicate:%d-%v\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 			} else {
-				DPrintf("rmDuplicate %d-%d: \t%d notdup:%d-%d\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
+				DPrintf("rmDuplicate %d-%d: \t%d notdup:%d-%v\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 				kv.logCache[pre_insid] = pre_v.(Op)
 				kv.validList[pre_insid] = true
 			}
@@ -303,7 +303,11 @@ func (kv *DisKV) interpretSnap(logentry Op) {
 }
 
 func (kv *DisKV) saveToDisk(logentry Op, value string, logidx int) {
+	// send to majority
+	DPrintf("call kv.saveToMajority(logentry, value, logidx-%d)\n", logidx)
+	kv.saveToMajority(logentry, value, logidx)
 	// save the new k/v
+	kv.loadMu.Lock()
 	st, err := kv.fileGet(LOGSHARD, LOGFILE)
 	DPrintf("test saveToDisk me:%d-%d dir-%v diskIdx-%v err-%v logidx-%d\n", kv.gid, kv.me, kv.dir, st, err, logidx)
 
@@ -313,25 +317,14 @@ func (kv *DisKV) saveToDisk(logentry Op, value string, logidx int) {
 	}
 	DPrintf("saveToDisk it-%d\tlogidx:%d\n", it, logidx)
 	if int(it) < logidx {
-		// send to majority
-		DPrintf("call kv.saveToMajority(logentry, value, logidx-%d)\n", logidx)
-		kv.saveToMajority(logentry, value, logidx)
 
-		kv.loadMu.Lock()
 		kv.filePut(key2shard(logentry.Key), logentry.Key, value)
 		// save the latest logidx
 		kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(logidx))
-
-		if st2, err2 := kv.fileGet(LOGSHARD, LOGFILE); err2 == nil {
-			DPrintf("saveToDisk me:%d-%d logidx-%v err-%v\n", kv.gid, kv.me, st2, err2)
-		}
-		// save the new uid map
-		kv.filePut(UIDSHARD+key2shard(logentry.Key), strconv.FormatInt(logentry.Uid, 10), strconv.Itoa(logidx))
-		kv.loadMu.Unlock()
-		// save the paxos
-		//kv.filePut(PAXOSSHARD, strconv.Itoa(logidx), enc(kv.logCache[logidx]))
-
 	}
+	// save the new uid map
+	kv.filePut(UIDSHARD+key2shard(logentry.Key), strconv.FormatInt(logentry.Uid, 10), strconv.Itoa(logidx))
+	kv.loadMu.Unlock()
 }
 
 func (kv *DisKV) SaveDisk(args *SaveDiskArgs, reply *SaveDiskReply) error {
@@ -348,7 +341,7 @@ func (kv *DisKV) SaveDisk(args *SaveDiskArgs, reply *SaveDiskReply) error {
 		reply.Err = NOK
 		return nil
 	}
-
+	kv.loadMu.Lock()
 	st, err := kv.fileGet(LOGSHARD, LOGFILE)
 	DPrintf("test SaveDisk me:%d-%d dir-%v diskIdx-%v err-%v logidx-%d\n", kv.gid, kv.me, kv.dir, st, err, args.Logidx)
 
@@ -356,20 +349,22 @@ func (kv *DisKV) SaveDisk(args *SaveDiskArgs, reply *SaveDiskReply) error {
 	if err != nil {
 		it = -1
 	}
+
 	if int(it) < args.Logidx {
-		kv.loadMu.Lock()
 		err := kv.filePut(key2shard(args.Logentry.Key), args.Logentry.Key, args.Value)
 		DPrintf("SaveDisk me:%d-%d logidx-%d err-%v\n", kv.gid, kv.me, args.Logidx, err)
 		// save the latest logidx
 		kv.filePut(LOGSHARD, LOGFILE, strconv.Itoa(args.Logidx))
-		// save the new uid map
-		uidmapTmp := kv.fileReadShard(UIDSHARD + key2shard(args.Logentry.Key))
-		DPrintf("SaveDisk bf uid ass:%v\n", uidmapTmp)
-		kv.filePut(UIDSHARD+key2shard(args.Logentry.Key), strconv.FormatInt(args.Logentry.Uid, 10), strconv.Itoa(args.Logidx))
-		uidmapTmp = kv.fileReadShard(UIDSHARD + key2shard(args.Logentry.Key))
-		DPrintf("SaveDisk af uid ass:%v\n", uidmapTmp)
-		kv.loadMu.Unlock()
+
 	}
+	// save the new uid map
+	//uidmapTmp := kv.fileReadShard(UIDSHARD + key2shard(args.Logentry.Key))
+	//DPrintf("SaveDisk bf uid ass:%v\n", uidmapTmp)
+	kv.filePut(UIDSHARD+key2shard(args.Logentry.Key), strconv.FormatInt(args.Logentry.Uid, 10), strconv.Itoa(args.Logidx))
+	//	uidmapTmp = kv.fileReadShard(UIDSHARD + key2shard(args.Logentry.Key))
+	//DPrintf("SaveDisk af uid ass:%v\n", uidmapTmp)
+	kv.loadMu.Unlock()
+
 	reply.LastLogId = int(it)
 	reply.Err = OK
 	return nil
@@ -416,7 +411,7 @@ func (kv *DisKV) interpretLog(insid int, curLog Op) string {
 			// check if duplicate
 			if dupSeqid, dok := kv.uidWsh[key2shard(logentry.Key)][logentry.Uid]; dok && (dupSeqid != 0) && (logentry.Uid != -1) && ((dupSeqid != logidx) || (dupSeqid == -1)) {
 				delete(kv.logCache, logidx)
-				DPrintf("interpretLog: duplicate %d with %d and remove %v v-%v uid-%v\n", logidx, dupSeqid, kv.logCache, kv.db[curLog.Key], kv.uidWsh)
+				DPrintf("interpretLog: duplicate %d with %d and remove %v v-%v\n", logidx, dupSeqid, kv.logCache, kv.db[curLog.Key])
 				kv.printLog()
 				continue
 			}
