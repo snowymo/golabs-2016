@@ -20,7 +20,7 @@ import (
 	"sort"
 )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -207,7 +207,7 @@ func (kv *DisKV) rmDuplicate(insid int, curLog Op) {
 
 		if _, isop := pre_v.(Op); isop {
 			//if u, uidok := kv.uidmap[pre_v.(Op).Uid]; uidok && (u != 0) {
-			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) {
+			if u, uidok := kv.uidWsh[key2shard(pre_v.(Op).Key)][pre_v.(Op).Uid]; uidok && (u != 0) && (u != pre_insid) {
 				// already true, discard this entry
 				DPrintf("rmDuplicate %d-%d: \t%d duplicate:%d-%v\n", kv.gid, kv.me, pre_insid, pre_v.(Op).Uid, u)
 			} else {
