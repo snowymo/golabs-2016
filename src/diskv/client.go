@@ -95,17 +95,18 @@ func (ck *Clerk) Get(key string) string {
 		gid := ck.config.Shards[shard]
 
 		servers, ok := ck.config.Groups[gid]
-
+		DPrintf("servers:%v\n", servers)
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
 				args := &GetArgs{key, uid, shard, srv}
 				var reply GetReply
+				DPrintf("call(%v, DisKV.Get, args-%v, &reply)\n", srv, args)
 				ok := call(srv, "DisKV.Get", args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
 				}
-				if ok && (reply.Err == ErrWrongGroup) {
+				if ok {
 					break
 				}
 			}
@@ -131,17 +132,18 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		gid := ck.config.Shards[shard]
 
 		servers, ok := ck.config.Groups[gid]
-
+		DPrintf("servers:%v\n", servers)
 		if ok {
 			// try each server in the shard's replication group.
 			for _, srv := range servers {
 				args := &PutAppendArgs{key, value, op, uid, shard, srv}
 				var reply PutAppendReply
+				DPrintf("call(%v, DisKV.PutAppend, args-%v, &reply)\n", srv, args)
 				ok := call(srv, "DisKV.PutAppend", args, &reply)
 				if ok && reply.Err == OK {
 					return
 				}
-				if ok && (reply.Err == ErrWrongGroup) {
+				if ok {
 					break
 				}
 			}

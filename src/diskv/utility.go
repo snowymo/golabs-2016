@@ -44,6 +44,14 @@ func CopyMapSS(dstMap map[string]string, srcMap map[string]string) {
 	//DPrintf("after cpy %v\n", dstMap)
 }
 
+func CopyMapIB(dstMap map[int]bool, srcMap map[int]bool) {
+	//DPrintf("before cpy dst:%v\tsrc:%v\n", dstMap, srcMap)
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
+	//DPrintf("after cpy %v\n", dstMap)
+}
+
 func CopyUidMap(dstMap map[int]map[int64]int, srcMap map[string]string, shard int) {
 	for k, v := range srcMap {
 		valu, _ := strconv.ParseInt(v, 10, 32)
@@ -180,4 +188,37 @@ func dec(buf string) Op {
 	d.Decode(&op.GSmap)
 	d.Decode(&op.Uid)
 	return op
+}
+
+// encode two regular values into a string
+// that can be saved in a file.
+func encMap(m map[int]bool) string {
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	e.Encode(len(m))
+	for k, v := range m {
+		e.Encode(k)
+		e.Encode(v)
+	}
+	DPrintf("encMap %v to %v\n", m, string(w.Bytes()))
+	return string(w.Bytes())
+}
+
+// decode a string originally produced by enc() and
+// return the original values.
+func decMap(buf string) map[int]bool {
+	m := make(map[int]bool)
+	r := bytes.NewBuffer([]byte(buf))
+	d := gob.NewDecoder(r)
+	var lens int
+	d.Decode(&lens)
+	for i := 0; i < lens; i++ {
+		var key int
+		var value bool
+		d.Decode(&key)
+		d.Decode(&value)
+		m[key] = value
+	}
+	DPrintf("decMap %v\n", m)
+	return m
 }

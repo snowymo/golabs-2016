@@ -15,6 +15,7 @@ const (
 	ErrWrongGroup = "ErrWrongGroup"
 	ErrNoSnap     = "ErrNoSnap"
 	NOK           = "NOK"
+	ErrDupR       = "ErrDupReCfg"
 )
 
 type Err string
@@ -57,6 +58,7 @@ type UpdateReply struct {
 	//Uidmap map[int64]int //uidmap = make(map[int64]bool)
 	UidWsh map[int]map[int64]int
 	DB     map[string]string
+	BReCfg map[int]bool
 	//U2S    map[int64]int
 	Disk map[int]map[string]string
 	Err  Err
@@ -65,6 +67,7 @@ type UpdateReply struct {
 type LoadDiskArgs struct {
 	UidWsh    map[int]map[int64]int
 	DB        map[string]string
+	BReCfg    map[int]bool
 	LastLogId int
 	Me        int
 	Disk      map[int]map[string]string
@@ -75,6 +78,7 @@ type LoadDiskReply struct {
 	//Uidmap map[int64]int //uidmap = make(map[int64]bool)
 	UidWsh    map[int]map[int64]int
 	DB        map[string]string
+	BReCfg    map[int]bool
 	LogCache  map[int]Op
 	LastLogId int
 	Disk      map[int]map[string]string
@@ -97,6 +101,7 @@ type SaveDiskReply struct {
 type ReplaceDiskArgs struct {
 	LastLogId int
 	Disk      map[int]map[string]string
+	Me        int
 	Id        int64 // unique id
 }
 
@@ -111,3 +116,5 @@ const LOGSHARD = 11
 const UIDSHARD = 12
 const LOGFILE = "logidx"
 const PAXOSSHARD = 22
+const RECFG = 10
+const RECFGFILE = "bRecfg"
